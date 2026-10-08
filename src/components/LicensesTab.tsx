@@ -53,6 +53,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   const [editLimit, setEditLimit] = useState(1);
   const [editStatus, setEditStatus] = useState<'active' | 'suspended' | 'expired' | 'revoked'>('active');
   const [editNotes, setEditNotes] = useState('');
+  const [editPin, setEditPin] = useState('');
   const [editLoading, setEditLoading] = useState(false);
 
   // Close dropdown on outside click
@@ -204,6 +205,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
     setEditLimit(license.device_limit);
     setEditStatus(license.status);
     setEditNotes(license.notes || '');
+    setEditPin(license.pin || '');
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -217,6 +219,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
         device_limit: Number(editLimit),
         status: editStatus,
         notes: editNotes,
+        pin: editPin.trim() || undefined,
       });
       setEditingLicense(null);
       await loadLicenses();
@@ -272,7 +275,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   };
 
   return (
-    <div className="space-y-3 font-mono text-xs">
+    <div className="space-y-3 font-sans text-xs">
       {/* Controls Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
         <form onSubmit={handleSearchSubmit} className="flex items-center gap-1.5 flex-1 max-w-md">
@@ -282,13 +285,13 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search key..."
-              className="w-full pl-7 pr-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+              className="w-full pl-7 pr-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:border-indigo-500/80 focus:outline-none"
             />
             <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-1.5" />
           </div>
           <button
             type="submit"
-            className="px-2 py-1 text-xs rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 transition-colors"
+            className="px-2.5 py-1 text-xs font-medium rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 transition-colors"
           >
             Search
           </button>
@@ -299,7 +302,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
           <select
             value={appFilter}
             onChange={(e) => setAppFilter(e.target.value)}
-            className="px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-300 focus:outline-none max-w-[140px] truncate"
+            className="px-2 py-1 text-xs font-sans bg-slate-900 border border-slate-800 rounded text-slate-300 focus:outline-none max-w-[140px] truncate"
           >
             <option value="all">App: All</option>
             <option value="global">Global Only</option>
@@ -313,7 +316,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-300 focus:outline-none"
+            className="px-2 py-1 text-xs font-sans bg-slate-900 border border-slate-800 rounded text-slate-300 focus:outline-none"
           >
             <option value="all">Status: All</option>
             <option value="active">Active</option>
@@ -325,7 +328,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
           <select
             value={tierFilter}
             onChange={(e) => setTierFilter(e.target.value)}
-            className="px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-300 focus:outline-none"
+            className="px-2 py-1 text-xs font-sans bg-slate-900 border border-slate-800 rounded text-slate-300 focus:outline-none"
           >
             <option value="all">Tier: All</option>
             <option value="Standard">Standard</option>
@@ -344,7 +347,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
 
           <button
             onClick={onOpenBulk}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-750 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-750 transition-colors"
           >
             <Layers className="w-3 h-3 text-slate-400" />
             Bulk
@@ -362,9 +365,9 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
 
       {/* Bulk Action Bar (when selected) - Includes Reset Feature */}
       {selectedIds.length > 0 && (
-        <div className="p-2 rounded bg-slate-900 border border-slate-800 flex items-center justify-between text-xs text-slate-300">
+        <div className="p-2 rounded bg-slate-900 border border-slate-800 flex items-center justify-between text-xs text-slate-300 font-sans">
           <span>{selectedIds.length} licenses selected</span>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 font-medium">
             {/* Bulk Reset Feature */}
             <button
               onClick={() => handleBulkAction('reset')}
@@ -418,10 +421,10 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
 
       {/* Main License Table - Clean & Compact */}
       <div className="border border-slate-800/80 rounded bg-slate-950/50 overflow-x-auto min-h-[320px]">
-        <table className="w-full text-left font-mono text-xs">
-          <thead className="bg-slate-900/60 border-b border-slate-800/80 text-slate-400 text-[10px] uppercase">
+        <table className="w-full text-left font-sans text-xs">
+          <thead className="bg-slate-900/60 border-b border-slate-800/80 text-xs font-semibold tracking-wider text-slate-400 uppercase font-sans">
             <tr>
-              <th className="py-2 px-2.5 w-6">
+              <th className="py-2.5 px-3 w-6">
                 <input
                   type="checkbox"
                   checked={selectedIds.length > 0 && selectedIds.length === licenses.length}
@@ -429,19 +432,19 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                   className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0"
                 />
               </th>
-              <th className="py-2 px-2.5">License Key</th>
-              <th className="py-2 px-2.5">App Scope</th>
-              <th className="py-2 px-2.5">Status</th>
-              <th className="py-2 px-2.5">Tier</th>
-              <th className="py-2 px-2.5">HWID Lock</th>
-              <th className="py-2 px-2.5">Validity</th>
-              <th className="py-2 px-2.5 text-right">Actions</th>
+              <th className="py-2.5 px-3">License Key</th>
+              <th className="py-2.5 px-3">App Scope</th>
+              <th className="py-2.5 px-3">Status</th>
+              <th className="py-2.5 px-3">Tier</th>
+              <th className="py-2.5 px-3">HWID Lock</th>
+              <th className="py-2.5 px-3">Validity</th>
+              <th className="py-2.5 px-3 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/40 text-slate-300 text-[11px]">
+          <tbody className="divide-y divide-slate-800/40 text-slate-300 text-xs">
             {licenses.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-slate-500">
+                <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
                   {loading ? 'Loading licenses...' : 'No licenses matching filter criteria.'}
                 </td>
               </tr>
@@ -455,7 +458,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                 return (
                   <tr key={lic.id} className="hover:bg-slate-900/30 transition-colors">
                     {/* Checkbox */}
-                    <td className="py-2 px-2.5">
+                    <td className="py-2 px-3">
                       <input
                         type="checkbox"
                         checked={selectedIds.includes(lic.id)}
@@ -465,18 +468,18 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                     </td>
 
                     {/* License Key: Half shown, full key & PIN copied */}
-                    <td className="py-2 px-2.5">
+                    <td className="py-2 px-3">
                       <div className="flex items-center gap-1.5">
                         <div className="flex flex-col">
                           <span
                             onClick={() => handleCopyKey(lic)}
-                            className="font-medium text-slate-200 cursor-pointer font-mono tracking-wide hover:text-indigo-300 transition-colors"
+                            className="font-medium text-slate-200 cursor-pointer font-mono text-xs tracking-wider hover:text-indigo-300 transition-colors"
                             title={`Click to copy: ${lic.key}${lic.pin ? ` PIN: ${lic.pin}` : ''}`}
                           >
                             {formatHalfKey(lic.key)}
                           </span>
                           {lic.pin && (
-                            <span className="text-[10px] text-indigo-400 font-medium tracking-wider">
+                            <span className="text-[10px] text-indigo-300/80 font-mono font-medium tracking-widest">
                               PIN: {lic.pin}
                             </span>
                           )}
@@ -487,7 +490,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                           title={`Copy Key & PIN: ${lic.key}${lic.pin ? ` PIN: ${lic.pin}` : ''}`}
                         >
                           {copiedKey === lic.key ? (
-                            <Check className="w-3 h-3 text-emerald-400" />
+                            <Check className="w-3 h-3 text-emerald-400/90" />
                           ) : (
                             <Copy className="w-3 h-3" />
                           )}
@@ -496,23 +499,23 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                     </td>
 
                     {/* App Scope: Only App Display Name */}
-                    <td className="py-2 px-2.5">
-                      <span className="text-slate-300 font-medium">
+                    <td className="py-2 px-3">
+                      <span className="text-slate-300 font-sans font-medium">
                         {lic.app_name || 'Global'}
                       </span>
                     </td>
 
                     {/* Status */}
-                    <td className="py-2 px-2.5">
+                    <td className="py-2 px-3">
                       <span
-                        className={`inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-medium uppercase ${
+                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase font-sans ${
                           lic.status === 'active'
-                            ? 'bg-emerald-950/30 text-emerald-400 border border-emerald-900/40'
+                            ? 'bg-emerald-950/30 text-emerald-400/90 border border-emerald-900/40'
                             : lic.status === 'expired'
-                            ? 'bg-amber-950/30 text-amber-400 border border-amber-900/40'
+                            ? 'bg-amber-950/30 text-amber-300/85 border border-amber-900/40'
                             : lic.status === 'suspended'
                             ? 'bg-slate-900 text-slate-400 border border-slate-800'
-                            : 'bg-rose-950/30 text-rose-400 border border-rose-900/40'
+                            : 'bg-rose-950/30 text-rose-400/85 border border-rose-900/40'
                         }`}
                       >
                         {lic.status}
@@ -520,61 +523,61 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                     </td>
 
                     {/* Tier */}
-                    <td className="py-2 px-2.5">
-                      <span className="px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800 text-[10px] text-slate-400">
+                    <td className="py-2 px-3">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-[10px] font-medium font-sans text-slate-400">
                         {lic.tier}
                       </span>
                     </td>
 
                     {/* HWID Lock */}
-                    <td className="py-2 px-2.5">
+                    <td className="py-2 px-3">
                       <button
                         onClick={() => onManageDevices(lic)}
-                        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-sans border transition-colors ${
                           isFull
-                            ? 'bg-amber-950/20 border-amber-900/40 text-amber-400/90'
+                            ? 'bg-amber-950/20 border-amber-900/40 text-amber-300/85'
                             : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
                         }`}
                         title="Click to view & unbind locked hardware"
                       >
                         <Laptop className="w-3 h-3 text-slate-400" />
-                        <span>
+                        <span className="font-mono">
                           {boundCount} / {limit === -1 ? '∞' : limit}
                         </span>
                       </button>
                     </td>
 
                     {/* Validity without 'remaining' */}
-                    <td className="py-2 px-2.5">{formatExpiry(lic)}</td>
+                    <td className="py-2 px-3 font-sans">{formatExpiry(lic)}</td>
 
                     {/* Actions: Reset Icon, Logout Icon, Settings Dropdown Menu */}
                     <td className="py-2 px-2.5 text-right relative">
                       <div className="flex items-center justify-end gap-1 license-settings-menu">
-                        {/* 1. Reset Icon: Click to reset all login devices, logged out all, and license fresh */}
+                        {/* 1. Reset Icon */}
                         <button
                           onClick={() => handleResetSingle(lic)}
-                          title="Reset: Unbind all devices & make license fresh ready to use"
-                          className="p-1 rounded text-slate-400 hover:text-sky-400 hover:bg-slate-900 transition-colors"
+                          title="Reset Devices"
+                          className="p-1 rounded text-slate-400 hover:text-sky-300 hover:bg-slate-900 transition-colors"
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
                         </button>
 
-                        {/* 2. Logout Icon: Click to logout client app */}
+                        {/* 2. Logout Icon */}
                         <button
                           onClick={() => handleLogoutSingle(lic)}
-                          title="Logout: Force logout active client applications"
-                          className="p-1 rounded text-slate-400 hover:text-amber-400 hover:bg-slate-900 transition-colors"
+                          title="Force Logout"
+                          className="p-1 rounded text-slate-400 hover:text-amber-300 hover:bg-slate-900 transition-colors"
                         >
                           <LogOut className="w-3.5 h-3.5" />
                         </button>
 
-                        {/* 3. Settings Icon: Opens dropdown menu */}
+                        {/* 3. Settings Icon */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             setOpenMenuId(isMenuOpen ? null : lic.id);
                           }}
-                          title="Settings & Actions Menu"
+                          title="Settings & Actions"
                           className={`p-1 rounded transition-colors ${
                             isMenuOpen
                               ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
@@ -588,7 +591,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                         {isMenuOpen && (
                           <div
                             onClick={(e) => e.stopPropagation()}
-                            className="absolute right-2 top-8 z-50 w-44 rounded-md bg-slate-950 border border-slate-800 shadow-xl py-1 text-left font-mono text-xs"
+                            className="absolute right-2 top-8 z-50 w-44 rounded-md bg-slate-950 border border-slate-800 shadow-xl py-1 text-left font-sans text-xs"
                           >
                             {/* Device View */}
                             <button
@@ -596,16 +599,16 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                                 setOpenMenuId(null);
                                 onManageDevices(lic);
                               }}
-                              className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-300 hover:bg-slate-900 hover:text-slate-100 transition-colors"
+                              className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-300 hover:bg-slate-900 hover:text-slate-200 transition-colors"
                             >
-                              <Eye className="w-3.5 h-3.5 text-indigo-400" />
+                              <Eye className="w-3.5 h-3.5 text-indigo-400/90" />
                               <span>View Devices</span>
                             </button>
 
                             {/* Edit */}
                             <button
                               onClick={() => handleOpenEdit(lic)}
-                              className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-300 hover:bg-slate-900 hover:text-slate-100 transition-colors"
+                              className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-300 hover:bg-slate-900 hover:text-slate-200 transition-colors"
                             >
                               <Edit2 className="w-3.5 h-3.5 text-slate-400" />
                               <span>Edit License</span>
@@ -671,10 +674,10 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
       {/* Edit License Modal */}
       {editingLicense && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-xs">
-          <div className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-lg shadow-xl overflow-hidden">
-            <div className="p-3 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between font-mono text-xs">
-              <span className="font-medium text-slate-200 uppercase">
-                Edit Key: {editingLicense.key}
+          <div className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-lg shadow-xl overflow-hidden font-sans text-xs">
+            <div className="p-3.5 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
+              <span className="font-semibold text-slate-200 text-xs tracking-normal">
+                Edit Key: <span className="font-mono text-indigo-300 font-medium">{editingLicense.key}</span>
               </span>
               <button
                 onClick={() => setEditingLicense(null)}
@@ -684,13 +687,13 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="p-4 space-y-3 font-mono text-xs">
+            <form onSubmit={handleSaveEdit} className="p-4 space-y-3.5 font-sans text-xs">
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Target Application Scope</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Target Application Scope</label>
                 <select
                   value={editAppId}
                   onChange={(e) => setEditAppId(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
                 >
                   <option value="global">Global (All Applications)</option>
                   {apps.map((a) => (
@@ -702,11 +705,11 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Status</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Status</label>
                 <select
                   value={editStatus}
                   onChange={(e: any) => setEditStatus(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
                 >
                   <option value="active">Active</option>
                   <option value="suspended">Suspended</option>
@@ -717,11 +720,11 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] text-slate-400 block mb-1">Tier</label>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">Tier</label>
                   <select
                     value={editTier}
                     onChange={(e) => setEditTier(e.target.value)}
-                    className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
                   >
                     <option value="Standard">Standard</option>
                     <option value="Pro">Pro</option>
@@ -730,11 +733,11 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400 block mb-1">Device Limit</label>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">Device Limit</label>
                   <select
                     value={editLimit}
                     onChange={(e) => setEditLimit(Number(e.target.value))}
-                    className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
                   >
                     <option value={1}>1 Device</option>
                     <option value={2}>2 Devices</option>
@@ -746,21 +749,34 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Notes</label>
-                <input
-                  type="text"
-                  value={editNotes}
-                  onChange={(e) => setEditNotes(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
-                />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">4-Digit Security PIN</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={editPin}
+                    onChange={(e) => setEditPin(e.target.value.replace(/\D/g, ''))}
+                    placeholder="e.g. 4321"
+                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none tracking-widest font-mono text-center font-bold text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">Notes</label>
+                  <input
+                    type="text"
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans text-xs focus:outline-none"
+                  />
+                </div>
               </div>
 
               <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setEditingLicense(null)}
-                  className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
+                  className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 font-medium transition-colors"
                 >
                   Cancel
                 </button>

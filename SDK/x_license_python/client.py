@@ -4,7 +4,7 @@ Unified high-level facade providing intuitive methods for authentication, auto-l
 device HWID tracking, background heartbeat threading, and graceful device slot releasing.
 """
 
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, Union
 from .config import SDKConfig
 from .device import DeviceManager
 from .server import ServerCommunicator
@@ -37,7 +37,7 @@ class XLicenseClient:
 
     def __init__(
         self,
-        config_path: Optional[str] = None,
+        config_path: Optional[Union[str, SDKConfig]] = None,
         config: Optional[SDKConfig] = None,
         app_name: Optional[str] = None,
         server_url: Optional[str] = None,
@@ -48,7 +48,9 @@ class XLicenseClient:
         ping_interval_seconds: Optional[int] = None,
         on_license_revoked: Optional[Callable[[str], None]] = None,
     ):
-        if config:
+        if isinstance(config_path, SDKConfig):
+            self.config = config_path
+        elif config:
             self.config = config
         elif app_name or server_url:
             self.config = SDKConfig(
@@ -144,6 +146,10 @@ class XLicenseClient:
 
     def is_authenticated(self) -> bool:
         """Returns True if currently authenticated with active license"""
+        return self._authenticated
+
+    def is_valid(self) -> bool:
+        """Alias for is_authenticated()"""
         return self._authenticated
 
     def get_license_info(self) -> Optional[Dict[str, Any]]:

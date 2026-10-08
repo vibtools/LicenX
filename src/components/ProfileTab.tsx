@@ -82,7 +82,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ username, onUsernameUpda
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">
             <UserCheck className="w-4 h-4 text-slate-400" />
-            <span className="font-medium text-slate-200 uppercase tracking-wider">Admin Profile</span>
+            <span className="font-medium text-slate-300 uppercase tracking-wider">Admin Profile</span>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 font-medium">
             SUPER ADMIN
@@ -112,7 +112,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ username, onUsernameUpda
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">
             <KeyRound className="w-4 h-4 text-slate-400" />
-            <span className="font-medium text-slate-200 uppercase tracking-wider">Security & Master Password</span>
+            <span className="font-medium text-slate-300 uppercase tracking-wider">Security & Master Password</span>
           </div>
 
           {message && (
@@ -196,7 +196,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ username, onUsernameUpda
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">
             <FileCode className="w-4 h-4 text-slate-400" />
-            <span className="font-medium text-slate-200 uppercase tracking-wider">Admin API Bearer Token</span>
+            <span className="font-medium text-slate-300 uppercase tracking-wider">Admin API Bearer Token</span>
           </div>
 
           <button

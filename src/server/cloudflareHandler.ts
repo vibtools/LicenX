@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { getDbClient, initDatabaseSchema } from './db.js';
+import { getDbClient, initDatabaseSchema, isTursoPlaceholder } from './db.js';
 import {
   generateRSAKeyPair,
   generateEd25519KeyPair,
@@ -93,6 +93,9 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
   if (normalizedPath.startsWith('/api/')) {
     normalizedPath = normalizedPath.substring(4); // '/api/v1/...' -> '/v1/...' or '/api/setup' -> '/setup'
   }
+  if (normalizedPath.length > 1 && normalizedPath.endsWith('/')) {
+    normalizedPath = normalizedPath.replace(/\/+$/, '');
+  }
 
   // Parse Body for non-GET requests
   let body: any = {};
@@ -149,11 +152,9 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       const result = await db.execute('SELECT id, username, ed25519_public_key, r2_config_json FROM admin_config LIMIT 1');
       const isInitialized = result.rows.length > 0;
       let r2Configured = false;
-      const hasTurso = Boolean(
-        env?.TURSO_DATABASE_URL ||
-        env?.DATABASE_URL ||
-        (typeof process !== 'undefined' && (process.env?.TURSO_DATABASE_URL || process.env?.DATABASE_URL))
-      );
+      const rawUrl = env?.TURSO_DATABASE_URL || env?.DATABASE_URL || (typeof process !== 'undefined' ? process.env?.TURSO_DATABASE_URL : '') || '';
+      const rawToken = env?.TURSO_AUTH_TOKEN || (typeof process !== 'undefined' ? process.env?.TURSO_AUTH_TOKEN : '') || '';
+      const hasTurso = !isTursoPlaceholder(rawUrl, rawToken);
 
       if (isInitialized) {
         const row = result.rows[0];
@@ -327,6 +328,16 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       if (!app_slug || !display_name) return errorResponse('app_slug and display_name are required');
 
       const cleanSlug = app_slug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+
+      // Check if slug exists
+      const existing = await db.execute({
+        sql: 'SELECT id FROM apps WHERE app_slug = ? LIMIT 1',
+        args: [cleanSlug],
+      });
+      if (existing.rows.length > 0) {
+        return errorResponse(`App with identifier "${cleanSlug}" already exists`, 400);
+      }
+
       const now = Date.now();
       const id = 'app_' + crypto.randomBytes(8).toString('hex');
       const secret = app_secret ? app_secret.trim() : 'sec_' + crypto.randomBytes(16).toString('hex');
@@ -337,7 +348,7 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         args: [id, cleanSlug, display_name.trim(), min_version || '1.0.0', secret, description || null, now, now],
       });
 
-      return jsonResponse({
+      const createdApp = {
         id,
         app_slug: cleanSlug,
         display_name: display_name.trim(),
@@ -348,6 +359,12 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         created_at: now,
         updated_at: now,
         licenses_count: 0,
+      };
+
+      return jsonResponse({
+        success: true,
+        app: createdApp,
+        ...createdApp,
       });
     }
 
@@ -568,7 +585,7 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         pin,
       } = body;
 
-      const finalKey = key ? key.trim().toUpperCase() : generateLicenseKey();
+      const finalKey = key ? key.trim().toUpperCase() : generateLicenseKey(body.prefix || 'VCON');
       const finalPin = pin && pin.toString().length === 4 ? pin.toString() : generate4DigitPin();
       const now = Date.now();
       const id = 'lic_' + crypto.randomBytes(8).toString('hex');
@@ -811,6 +828,10 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
           fields.push('customer_email = ?');
           args.push(customer_email);
         }
+        if (body.pin !== undefined) {
+          fields.push('pin = ?');
+          args.push(body.pin ? String(body.pin).trim() : null);
+        }
 
         if (fields.length === 0) {
           return errorResponse('No fields to update', 400);
@@ -963,14 +984,24 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       if (result.rows.length === 0) return errorResponse('License not found', 404);
 
       const lic = result.rows[0];
-      if (lic.pin && lic.pin.toString() !== pin.toString()) {
+      if (!lic.pin || String(lic.pin).trim() !== String(pin).trim()) {
         return errorResponse('Invalid Security PIN. Access denied.', 401);
+      }
+
+      const now = Date.now();
+      let currentStatus = lic.status as string;
+      if (lic.expires_at && now > Number(lic.expires_at) && currentStatus === 'active') {
+        currentStatus = 'expired';
+        await db.execute({
+          sql: "UPDATE licenses SET status = 'expired' WHERE id = ?",
+          args: [lic.id as string],
+        });
       }
 
       const devicesResult = await db.execute({
         sql: `SELECT id, hwid, device_name, os_info, ip_address, first_bound_at, last_ping_at, status
-              FROM devices WHERE license_id = ?
-              ORDER BY first_bound_at DESC`,
+              FROM devices WHERE license_id = ? AND status = 'active'
+              ORDER BY last_ping_at DESC, first_bound_at DESC`,
         args: [lic.id as string],
       });
 
@@ -978,18 +1009,19 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         license: {
           id: lic.id,
           key: lic.key,
-          status: lic.status,
+          status: currentStatus,
           tier: lic.tier,
-          app_name: lic.app_name || 'Global',
+          app_name: lic.app_name || null,
+          app_slug: lic.app_slug || (lic.app_id ? 'app' : 'global'),
           device_limit: Number(lic.device_limit),
           validity_type: lic.validity_type,
           validity_value: Number(lic.validity_value),
           created_at: Number(lic.created_at),
           activated_at: lic.activated_at ? Number(lic.activated_at) : null,
           expires_at: lic.expires_at ? Number(lic.expires_at) : null,
-          customer_name: lic.customer_name,
-          customer_email: lic.customer_email,
-          bound_devices_count: Number(lic.active_devices || 0),
+          customer_name: lic.customer_name || null,
+          customer_email: lic.customer_email || null,
+          bound_devices_count: devicesResult.rows.length,
         },
         devices: devicesResult.rows,
       });
@@ -1009,7 +1041,7 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       if (result.rows.length === 0) return errorResponse('License not found', 404);
 
       const lic = result.rows[0];
-      if (lic.pin && lic.pin.toString() !== pin.toString()) {
+      if (!lic.pin || String(lic.pin).trim() !== String(pin).trim()) {
         return errorResponse('Invalid Security PIN. Reset unauthorized.', 401);
       }
 
@@ -1055,6 +1087,73 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       const cleanHwid = hwid.trim();
       const now = Date.now();
 
+      // 1. Fetch server keys for signing
+      const configRes = await db.execute('SELECT ed25519_private_key, ed25519_public_key FROM admin_config LIMIT 1');
+      if (configRes.rows.length === 0) return errorResponse('Server not initialized', 503);
+      const privKey = configRes.rows[0].ed25519_private_key as string;
+      const pubKey = configRes.rows[0].ed25519_public_key as string;
+
+      // 2. Multi-App Scope Check if app_name is provided
+      let matchedApp: any = null;
+      if (app_name && typeof app_name === 'string' && app_name.trim()) {
+        const sanitizedSlug = app_name.trim().toLowerCase();
+        const appResult = await db.execute({
+          sql: 'SELECT * FROM apps WHERE app_slug = ? OR id = ? LIMIT 1',
+          args: [sanitizedSlug, app_name.trim()],
+        });
+
+        if (appResult.rows.length === 0) {
+          await db.execute({
+            sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                  VALUES (?, ?, ?, ?, ?, 'reject', 403, 'Application not registered on server', ?)`,
+            args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, sanitizedSlug, cleanHwid, ip, now],
+          });
+          return jsonResponse({ valid: false, code: 'APP_NOT_FOUND', message: `Application "${app_name}" is not registered on license server` }, 403);
+        }
+
+        matchedApp = appResult.rows[0];
+
+        if (matchedApp.status !== 'active') {
+          await db.execute({
+            sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                  VALUES (?, ?, ?, ?, ?, 'reject', 403, 'Application is inactive', ?)`,
+            args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp.app_slug, cleanHwid, ip, now],
+          });
+          return jsonResponse({ valid: false, code: 'APP_INACTIVE', message: `Application "${matchedApp.display_name}" is currently disabled` }, 403);
+        }
+
+        const appVersion = body.app_version || client_version;
+        if (matchedApp.min_version && appVersion) {
+          const isOutdated = (current: string, minRequired: string) => {
+            const cParts = current.split('.').map((p) => parseInt(p) || 0);
+            const mParts = minRequired.split('.').map((p) => parseInt(p) || 0);
+            for (let i = 0; i < Math.max(cParts.length, mParts.length); i++) {
+              const c = cParts[i] || 0;
+              const m = mParts[i] || 0;
+              if (c < m) return true;
+              if (c > m) return false;
+            }
+            return false;
+          };
+
+          if (isOutdated(appVersion, matchedApp.min_version)) {
+            await db.execute({
+              sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'reject', 426, 'Application version outdated (${appVersion} < ${matchedApp.min_version})', ?)`,
+              args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp.app_slug, cleanHwid, ip, now],
+            });
+            return jsonResponse({
+              valid: false,
+              code: 'APP_VERSION_OUTDATED',
+              message: `Update required. Client version: ${appVersion}, Minimum required: ${matchedApp.min_version}`,
+              current_version: appVersion,
+              min_version: matchedApp.min_version,
+            }, 426);
+          }
+        }
+      }
+
+      // 3. Fetch license record
       const licRes = await db.execute({
         sql: `SELECT l.*, a.status as app_status, a.app_slug, a.display_name
               FROM licenses l
@@ -1064,15 +1163,47 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       });
 
       if (licRes.rows.length === 0) {
+        await db.execute({
+          sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                VALUES (?, ?, ?, ?, ?, 'validate', 404, 'License key not found', ?)`,
+          args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+        });
         return jsonResponse({ valid: false, code: 'KEY_NOT_FOUND', message: 'License key not found' }, 404);
       }
 
       const lic = licRes.rows[0];
 
+      // 4. App Isolation / Scope check
+      if (lic.app_id) {
+        if (!matchedApp || matchedApp.id !== lic.app_id) {
+          await db.execute({
+            sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                  VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License key is not authorized for this app', ?)`,
+            args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+          });
+          return jsonResponse({
+            valid: false,
+            code: 'LICENSE_APP_MISMATCH',
+            message: 'This license key is restricted to a different application',
+          }, 403);
+        }
+      }
+
+      // 5. Status checks
       if (lic.status === 'revoked') {
+        await db.execute({
+          sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License revoked by administrator', ?)`,
+          args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+        });
         return jsonResponse({ valid: false, code: 'LICENSE_REVOKED', message: 'License revoked by administrator' }, 403);
       }
       if (lic.status === 'suspended') {
+        await db.execute({
+          sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License temporarily suspended', ?)`,
+          args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+        });
         return jsonResponse({ valid: false, code: 'LICENSE_SUSPENDED', message: 'License temporarily suspended' }, 403);
       }
       if (lic.status !== 'active') {
@@ -1083,17 +1214,12 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         }, 403);
       }
 
-      if (lic.app_status && lic.app_status !== 'active') {
-        return jsonResponse({ valid: false, code: 'APP_INACTIVE', message: 'Application is inactive' }, 403);
-      }
-
-      // Check device binding
+      // 6. Check device binding and active counts
       const devRes = await db.execute({
         sql: 'SELECT * FROM devices WHERE license_id = ? AND hwid = ? LIMIT 1',
         args: [lic.id as string, cleanHwid],
       });
 
-      // Count active devices
       const countRes = await db.execute({
         sql: "SELECT id FROM devices WHERE license_id = ? AND status = 'active'",
         args: [lic.id as string],
@@ -1109,6 +1235,11 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         }
         if (existingDevice.status === 'logged_out') {
           if (deviceLimit !== -1 && activeDevices.length >= deviceLimit) {
+            await db.execute({
+              sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'reject', 403, 'Device limit reached (${activeDevices.length}/${deviceLimit})', ?)`,
+              args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+            });
             return jsonResponse({
               valid: false,
               code: 'DEVICE_LIMIT_REACHED',
@@ -1124,6 +1255,11 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         });
       } else {
         if (deviceLimit !== -1 && activeDevices.length >= deviceLimit) {
+          await db.execute({
+            sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                  VALUES (?, ?, ?, ?, ?, 'reject', 403, 'Device limit exceeded (${activeDevices.length}/${deviceLimit})', ?)`,
+            args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+          });
           return jsonResponse({
             valid: false,
             code: 'DEVICE_LIMIT_REACHED',
@@ -1141,7 +1277,7 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         });
       }
 
-      // Activate license if first activation
+      // 7. Activate license if first activation
       let activatedAt = lic.activated_at ? Number(lic.activated_at) : null;
       let expiresAt = lic.expires_at ? Number(lic.expires_at) : null;
       if (!activatedAt) {
@@ -1161,17 +1297,18 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         });
       }
 
-      // Check expiry
+      // 8. Check expiry
       if (expiresAt && now > expiresAt) {
         await db.execute({ sql: "UPDATE licenses SET status = 'expired' WHERE id = ?", args: [lic.id as string] });
+        await db.execute({
+          sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License expired', ?)`,
+          args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+        });
         return jsonResponse({ valid: false, code: 'LICENSE_EXPIRED', message: 'License has expired' }, 403);
       }
 
-      // Sign payload with server private key
-      const configRes = await db.execute('SELECT ed25519_private_key, ed25519_public_key FROM admin_config LIMIT 1');
-      const privKey = configRes.rows[0].ed25519_private_key as string;
-      const pubKey = configRes.rows[0].ed25519_public_key as string;
-
+      // 9. Sign payload with server private key
       const boundCount = existingDevice && existingDevice.status === 'active' ? activeDevices.length : activeDevices.length + 1;
 
       const signedData: Record<string, unknown> = {
@@ -1179,8 +1316,8 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         license_key: cleanKey,
         status: 'active',
         tier: lic.tier || 'Standard',
-        app_slug: lic.app_slug || 'global',
-        app_name: lic.display_name || app_name || 'Global',
+        app_slug: matchedApp ? matchedApp.app_slug : (lic.app_slug || 'global'),
+        app_name: matchedApp ? matchedApp.display_name : (lic.display_name || app_name || 'Global'),
         app_id: lic.app_id || null,
         hwid: cleanHwid,
         device_name: device_name,
@@ -1199,7 +1336,7 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       await db.execute({
         sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
               VALUES (?, ?, ?, ?, ?, 'validate', 200, 'Validated and signed successfully', ?)`,
-        args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, lic.app_slug || null, cleanHwid, ip, now],
+        args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
       });
 
       return jsonResponse({
@@ -1275,6 +1412,13 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       await db.execute({
         sql: "UPDATE devices SET status = 'logged_out', last_ping_at = ? WHERE license_id = ? AND hwid = ?",
         args: [now, licId, cleanHwid],
+      });
+
+      // Log logout audit entry
+      await db.execute({
+        sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+              VALUES (?, ?, ?, ?, ?, 'logout', 200, 'Device unbind / logout completed', ?)`,
+        args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, app_name || null, cleanHwid, ip, now],
       });
 
       return jsonResponse({
@@ -1358,8 +1502,10 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         } catch {}
       }
 
-      const tursoDbUrl = env?.TURSO_DATABASE_URL || env?.DATABASE_URL || (typeof process !== 'undefined' ? process.env?.TURSO_DATABASE_URL : '') || 'file:vcon_data.db';
-      const hasTurso = Boolean(env?.TURSO_DATABASE_URL || (typeof process !== 'undefined' && process.env?.TURSO_DATABASE_URL && process.env?.TURSO_AUTH_TOKEN));
+      const rawUrl = env?.TURSO_DATABASE_URL || env?.DATABASE_URL || (typeof process !== 'undefined' ? process.env?.TURSO_DATABASE_URL : '') || '';
+      const rawToken = env?.TURSO_AUTH_TOKEN || (typeof process !== 'undefined' ? process.env?.TURSO_AUTH_TOKEN : '') || '';
+      const hasTurso = !isTursoPlaceholder(rawUrl, rawToken);
+      const tursoDbUrl = hasTurso ? rawUrl : 'file:vcon_data.db';
 
       return jsonResponse({
         username: row.username,

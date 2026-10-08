@@ -195,7 +195,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-slate-950 border-r border-slate-800/80 transition-all duration-200 ease-in-out font-mono select-none ${
+        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-slate-950 border-r border-slate-800/80 transition-all duration-200 ease-in-out font-sans select-none antialiased ${
           collapsed ? 'w-16' : 'w-56'
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
@@ -218,10 +218,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
             {!collapsed && (
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="font-semibold text-xs tracking-wide text-slate-200 truncate">
+                <span className="font-semibold text-xs tracking-normal text-slate-300 truncate">
                   {siteSettings?.siteName || 'LicenX'}
                 </span>
-                <span className="text-[9px] px-1 py-0.2 rounded bg-slate-900 border border-slate-800 text-slate-400">
+                <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-900 border border-slate-800 text-slate-400">
                   ENGINE
                 </span>
               </div>
@@ -252,8 +252,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   title={collapsed ? group.label : undefined}
                   className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-[11px] font-medium transition-all ${
                     isAnyChildActive
-                      ? 'text-slate-200 bg-slate-900/50'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/30'
+                      ? 'text-slate-300 bg-slate-900/50'
+                      : 'text-slate-400 hover:text-slate-300 hover:bg-slate-900/30'
                   } ${collapsed ? 'justify-center px-0' : ''}`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
@@ -289,10 +289,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           type="button"
                           onClick={() => handleItemClick(item.id)}
                           title={collapsed ? item.label : undefined}
-                          className={`w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-all ${
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-all ${
                             isActive
                               ? 'bg-indigo-950/40 text-indigo-300 border border-indigo-800/40 font-medium'
-                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 border border-transparent'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 border border-transparent font-normal'
                           } ${collapsed ? 'justify-center px-0' : ''}`}
                         >
                           <span
@@ -304,13 +304,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           </span>
 
                           {!collapsed && (
-                            <span className="flex-1 text-left truncate text-[11px]">
+                            <span className="flex-1 text-left truncate text-xs">
                               {item.label}
                             </span>
                           )}
 
                           {!collapsed && item.badge !== undefined && item.badge > 0 && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800 text-slate-400">
+                            <span className="font-mono text-[9px] px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800 text-slate-400">
                               {item.badge}
                             </span>
                           )}
@@ -326,13 +326,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* System Badges (Expanded View) */}
         {!collapsed && (
-          <div className="p-2 mx-2 mb-2 rounded bg-slate-900/40 border border-slate-800/70 space-y-1 text-[10px]">
+          <div className="p-2 mx-2 mb-2 rounded bg-slate-900/40 border border-slate-800/70 space-y-1 text-[11px] font-sans">
             <div className="flex items-center justify-between text-slate-400">
               <span className="flex items-center gap-1">
                 <Database className="w-3 h-3 text-slate-400" />
                 Database:
               </span>
-              <span className="text-slate-300">{hasTursoEnv ? 'Turso' : 'libSQL'}</span>
+              <span className="font-mono text-slate-300">{hasTursoEnv ? 'Turso' : 'libSQL'}</span>
             </div>
 
             <div className="flex items-center justify-between text-slate-400">
@@ -340,7 +340,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Cloud className="w-3 h-3 text-slate-400" />
                 R2 Storage:
               </span>
-              <span className={r2Configured ? 'text-slate-300' : 'text-slate-500'}>
+              <span className={`font-mono ${r2Configured ? 'text-slate-300' : 'text-slate-500'}`}>
                 {r2Configured ? 'Active' : 'Off'}
               </span>
             </div>
@@ -350,22 +350,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/80"></span>
                 Ed25519:
               </span>
-              <span className="text-slate-300">Online</span>
+              <span className="font-mono text-slate-300">Online</span>
             </div>
           </div>
         )}
 
         {/* Footer: User Profile & Logout */}
-        <div className="p-2 border-t border-slate-800/80 bg-slate-950">
+        <div className="p-2 border-t border-slate-800/80 bg-slate-950 font-sans">
           <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} gap-2`}>
             {!collapsed && (
               <div className="flex items-center gap-2 min-w-0">
-                <div className="w-6 h-6 rounded bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-300 font-medium text-[10px]">
+                <div className="w-6 h-6 rounded bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-300 font-medium text-[11px]">
                   {username.charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11px] font-medium text-slate-300 truncate">{username}</div>
-                  <div className="text-[9px] text-slate-500">Super Admin</div>
+                  <div className="text-xs font-medium text-slate-300 truncate">{username}</div>
+                  <div className="text-[10px] text-slate-500 font-normal">Super Admin</div>
                 </div>
               </div>
             )}

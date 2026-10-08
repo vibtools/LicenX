@@ -44,19 +44,19 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
   const titles: Record<ActiveTab, string> = {
     overview: 'System Overview',
-    apps: 'Applications & Client Configs',
-    licenses: 'License Keys Management',
-    devices: 'HWID Lock & Hardware Tracker',
-    logs: 'Security & Validation Audit Logs',
-    simulator: 'Cryptographic API Simulator',
-    code: 'Client Integration SDK Hub',
-    profile: 'Admin Security & Profile',
-    'site-settings': 'Site Settings & Branding Control',
-    settings: 'Database, R2 & Crypto Settings',
+    apps: 'Applications',
+    licenses: 'License Keys',
+    devices: 'HWID Locks',
+    logs: 'Audit Logs',
+    simulator: 'API Simulator',
+    code: 'SDK Hub',
+    profile: 'Admin Profile',
+    'site-settings': 'Site Settings',
+    settings: 'System Settings',
   };
 
   return (
-    <header className="h-12 border-b border-slate-800/80 bg-slate-950/80 sticky top-0 z-30 backdrop-blur-md px-3 sm:px-4 flex items-center justify-between font-mono text-xs select-none">
+    <header className="h-12 border-b border-slate-800/80 bg-slate-950/80 sticky top-0 z-30 backdrop-blur-md px-3 sm:px-4 flex items-center justify-between font-sans text-xs select-none">
       {/* Left: Mobile Toggle & Page Title */}
       <div className="flex items-center gap-2.5">
         <button
@@ -68,7 +68,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         </button>
 
         <div className="flex items-center gap-1.5">
-          <span className="font-semibold text-slate-200 tracking-wide text-xs">
+          <span className="font-semibold text-slate-300 tracking-normal text-xs">
             {titles[activeTab] || 'LicenX Dashboard'}
           </span>
         </div>
@@ -79,7 +79,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         {/* Live Clock */}
         <div className="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900/80 border border-slate-800 text-[11px] text-slate-400">
           <Clock className="w-3 h-3 text-slate-400" />
-          <span>{time} UTC</span>
+          <span className="font-mono">{time}</span>
+          <span>UTC</span>
         </div>
 
         {/* Refresh */}

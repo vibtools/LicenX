@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as archiverModule from 'archiver';
 const archiver = (archiverModule as any).default || archiverModule;
-import { getDbClient } from './db.js';
+import { getDbClient, isTursoPlaceholder } from './db.js';
 import {
   generateEd25519KeyPair,
   generateRSAKeyPair,
@@ -66,7 +66,7 @@ apiRouter.get('/setup/status', async (req: Request, res: Response) => {
 
     const isInitialized = result.rows.length > 0;
     let r2Configured = false;
-    let hasTurso = Boolean(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
+    let hasTurso = !isTursoPlaceholder(process.env.TURSO_DATABASE_URL, process.env.TURSO_AUTH_TOKEN);
 
     if (isInitialized) {
       const row = result.rows[0];
@@ -664,13 +664,14 @@ apiRouter.post('/licenses/bulk', requireAdminAuth, async (req: Request, res: Res
       validity_type = 'lifetime',
       validity_value = 0,
       notes = 'Bulk Generated',
+      pin,
       backupToR2 = false,
     } = req.body;
 
     const totalCount = Math.min(Math.max(Number(count) || 1, 1), 2000);
     const db = getDbClient();
     const now = Date.now();
-    const batchPin = generateLicensePin();
+    const batchPin = pin && pin.toString().length === 4 ? pin.toString() : generateLicensePin();
     const generatedKeys: string[] = [];
     const generatedRows: any[] = [];
 
@@ -765,7 +766,7 @@ apiRouter.post('/licenses/bulk', requireAdminAuth, async (req: Request, res: Res
 apiRouter.patch('/licenses/:id', requireAdminAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { status, tier, app_id, device_limit, expires_at, notes, customer_name, customer_email } = req.body;
+    const { status, tier, app_id, device_limit, expires_at, notes, customer_name, customer_email, pin } = req.body;
     const db = getDbClient();
 
     const fields: string[] = [];
@@ -802,6 +803,10 @@ apiRouter.patch('/licenses/:id', requireAdminAuth, async (req: Request, res: Res
     if (customer_email !== undefined) {
       fields.push('customer_email = ?');
       args.push(customer_email);
+    }
+    if (pin !== undefined) {
+      fields.push('pin = ?');
+      args.push(pin ? String(pin).trim() : null);
     }
 
     if (fields.length === 0) {
@@ -986,7 +991,7 @@ apiRouter.post('/v1/user/license/check', async (req: Request, res: Response) => 
 
     const db = getDbClient();
     const result = await db.execute({
-      sql: `SELECT id, status, device_limit,
+      sql: `SELECT id, status, device_limit, expires_at,
             (SELECT COUNT(*) FROM devices d WHERE d.license_id = l.id AND d.status = 'active') as active_device_count
             FROM licenses l WHERE UPPER(l.key) = ? LIMIT 1`,
       args: [license_key.trim().toUpperCase()],
@@ -998,8 +1003,18 @@ apiRouter.post('/v1/user/license/check', async (req: Request, res: Response) => 
     }
 
     const row = result.rows[0];
+    const now = Date.now();
+    let currentStatus = row.status as string;
+    if (row.expires_at && now > Number(row.expires_at) && currentStatus === 'active') {
+      currentStatus = 'expired';
+      await db.execute({
+        sql: "UPDATE licenses SET status = 'expired' WHERE id = ?",
+        args: [row.id],
+      });
+    }
+
     res.json({
-      status: row.status,
+      status: currentStatus,
       device_limit: Number(row.device_limit),
       active_device_count: Number(row.active_device_count || 0),
     });
@@ -1037,10 +1052,20 @@ apiRouter.post('/v1/user/control/open', async (req: Request, res: Response) => {
       return;
     }
 
-    // Fetch full devices information
+    const now = Date.now();
+    let currentStatus = license.status as string;
+    if (license.expires_at && now > Number(license.expires_at) && currentStatus === 'active') {
+      currentStatus = 'expired';
+      await db.execute({
+        sql: "UPDATE licenses SET status = 'expired' WHERE id = ?",
+        args: [license.id],
+      });
+    }
+
+    // Fetch ONLY active bound devices
     const devicesResult = await db.execute({
       sql: `SELECT id, hwid, device_name, os_info, ip_address, first_bound_at, last_ping_at, status
-            FROM devices WHERE license_id = ? ORDER BY first_bound_at DESC`,
+            FROM devices WHERE license_id = ? AND status = 'active' ORDER BY last_ping_at DESC, first_bound_at DESC`,
       args: [license.id],
     });
 
@@ -1048,10 +1073,10 @@ apiRouter.post('/v1/user/control/open', async (req: Request, res: Response) => {
       license: {
         id: license.id,
         key: license.key,
-        status: license.status,
+        status: currentStatus,
         tier: license.tier,
-        app_name: license.app_name || 'Global Application',
-        app_slug: license.app_slug || 'global',
+        app_name: license.app_name || null,
+        app_slug: license.app_slug || (license.app_id ? 'app' : 'global'),
         device_limit: Number(license.device_limit),
         validity_type: license.validity_type,
         validity_value: Number(license.validity_value),
@@ -1095,10 +1120,18 @@ apiRouter.post('/v1/user/control/reset', async (req: Request, res: Response) => 
       return;
     }
 
-    // Reset all device bindings
+    // Reset all device bindings to logged_out
+    const now = Date.now();
     await db.execute({
-      sql: 'DELETE FROM devices WHERE license_id = ?',
-      args: [license.id],
+      sql: "UPDATE devices SET status = 'logged_out', last_ping_at = ? WHERE license_id = ?",
+      args: [now, license.id],
+    });
+
+    // Record audit log
+    await db.execute({
+      sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+            VALUES (?, ?, NULL, 'SELF_SERVICE_RESET', ?, 'reset', 200, 'User forced reset of all bound devices via PIN', ?)`,
+      args: ['log_' + crypto.randomBytes(6).toString('hex'), license.key, (req.ip || '127.0.0.1') as string, now],
     });
 
     res.json({
@@ -1680,8 +1713,8 @@ apiRouter.get('/settings', requireAdminAuth, async (req: Request, res: Response)
       username: row.username,
       publicKeyPem: row.ed25519_public_key,
       r2Config,
-      hasTursoEnv: Boolean(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN),
-      tursoUrl: process.env.TURSO_DATABASE_URL || 'file:vcon_data.db',
+      hasTursoEnv: !isTursoPlaceholder(process.env.TURSO_DATABASE_URL, process.env.TURSO_AUTH_TOKEN),
+      tursoUrl: !isTursoPlaceholder(process.env.TURSO_DATABASE_URL, process.env.TURSO_AUTH_TOKEN) ? (process.env.TURSO_DATABASE_URL || 'file:vcon_data.db') : 'file:vcon_data.db',
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to get settings' });

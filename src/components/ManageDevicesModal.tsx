@@ -79,13 +79,13 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
         <div className="p-3 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Laptop className="w-4 h-4 text-slate-400" />
-            <span className="font-mono text-xs font-medium text-slate-200 uppercase tracking-wider">
+            <span className="font-mono text-xs font-medium text-slate-300 uppercase tracking-wider">
               HWID Lock Inspector: {license.key}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
-              {devices.length} / {license.device_limit === -1 ? '∞' : license.device_limit} Allowed
+              {devices.filter((d) => d.status === 'active').length} / {license.device_limit === -1 ? '∞' : license.device_limit} Bound
             </span>
             <button
               onClick={onClose}
@@ -119,37 +119,61 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
                   <tr>
                     <th className="py-2 px-2.5">HWID Hash</th>
                     <th className="py-2 px-2.5">Device / OS</th>
+                    <th className="py-2 px-2.5">Status</th>
                     <th className="py-2 px-2.5">IP Address</th>
                     <th className="py-2 px-2.5">Last Ping</th>
                     <th className="py-2 px-2.5 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/40 text-slate-300 text-[11px]">
-                  {devices.map((d) => (
-                    <tr key={d.id} className="hover:bg-slate-900/30 transition-colors">
-                      <td className="py-2 px-2.5">
-                        <span className="font-medium text-slate-300 select-all" title={d.hwid}>
-                          {d.hwid.slice(0, 16)}...
-                        </span>
-                      </td>
-                      <td className="py-2 px-2.5">
-                        <div className="font-medium text-slate-300">{d.device_name || 'PC Client'}</div>
-                        <div className="text-[10px] text-slate-500">{d.os_info || 'Windows/Linux'}</div>
-                      </td>
-                      <td className="py-2 px-2.5 text-slate-400">{d.ip_address}</td>
-                      <td className="py-2 px-2.5 text-slate-400">{formatTime(d.last_ping_at)}</td>
-                      <td className="py-2 px-2.5 text-right">
-                        <button
-                          onClick={() => handleUnbind(d.id)}
-                          disabled={actionLoading}
-                          className="px-2 py-1 text-[10px] rounded bg-slate-900 hover:bg-rose-950/40 text-rose-400 border border-slate-800 hover:border-rose-900/50 transition-colors"
-                          title="Unbind hardware slot"
-                        >
-                          Unbind HWID
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {devices.map((d) => {
+                    const isActive = d.status === 'active';
+                    return (
+                      <tr key={d.id} className="hover:bg-slate-900/30 transition-colors">
+                        <td className="py-2 px-2.5">
+                          <span className="font-medium text-slate-300 select-all" title={d.hwid}>
+                            {d.hwid.slice(0, 16)}...
+                          </span>
+                        </td>
+                        <td className="py-2 px-2.5">
+                          <div className="font-medium text-slate-300">{d.device_name || 'PC Client'}</div>
+                          <div className="text-[10px] text-slate-500">{d.os_info || 'Windows/Linux'}</div>
+                        </td>
+                        <td className="py-2 px-2.5">
+                          <span
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase ${
+                              isActive
+                                ? 'bg-emerald-950/30 text-emerald-400/90 border border-emerald-900/40'
+                                : 'bg-slate-900 text-slate-400 border border-slate-800'
+                            }`}
+                          >
+                            <span
+                              className={`w-1 h-1 rounded-full ${
+                                isActive ? 'bg-emerald-500/80' : 'bg-slate-500'
+                              }`}
+                            />
+                            {isActive ? 'Active Lock' : 'Logged Out'}
+                          </span>
+                        </td>
+                        <td className="py-2 px-2.5 text-slate-400">{d.ip_address}</td>
+                        <td className="py-2 px-2.5 text-slate-400">{formatTime(d.last_ping_at)}</td>
+                        <td className="py-2 px-2.5 text-right">
+                          <button
+                            onClick={() => handleUnbind(d.id)}
+                            disabled={actionLoading}
+                            className={`px-2 py-1 text-[10px] rounded border transition-colors ${
+                              isActive
+                                ? 'bg-slate-900 hover:bg-rose-950/40 text-rose-400 border-slate-800 hover:border-rose-900/50'
+                                : 'bg-slate-900 hover:bg-slate-850 text-slate-400 border-slate-800'
+                            }`}
+                            title={isActive ? 'Unbind active hardware slot' : 'Remove inactive record'}
+                          >
+                            {isActive ? 'Unbind HWID' : 'Remove'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

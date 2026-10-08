@@ -1,4 +1,4 @@
-import { createClient, Client } from '@libsql/client';
+import { createClient, type Client } from '@libsql/client';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -7,17 +7,42 @@ let dbClient: Client | null = null;
 let currentDbUrl = '';
 let currentAuthToken = '';
 
+export function isTursoPlaceholder(url?: string, token?: string): boolean {
+  if (!url) return true;
+  const cleanUrl = url.trim().toLowerCase();
+  if (
+    cleanUrl.includes('your-database-name') ||
+    cleanUrl.includes('example.com') ||
+    cleanUrl.includes('placeholder') ||
+    cleanUrl.includes('[database-name]') ||
+    cleanUrl.includes('[org]') ||
+    cleanUrl === 'libsql://' ||
+    cleanUrl === 'https://'
+  ) {
+    return true;
+  }
+  if (token && (token.includes('your-turso-auth-token') || token.includes('placeholder') || token.includes('[auth-token]'))) {
+    return true;
+  }
+  return false;
+}
+
 export function getDbClient(env?: any): Client {
-  const url =
+  let url =
     env?.TURSO_DATABASE_URL ||
     env?.DATABASE_URL ||
     (typeof process !== 'undefined' ? process.env?.TURSO_DATABASE_URL || process.env?.DATABASE_URL : '') ||
     'file:vcon_data.db';
 
-  const authToken =
+  let authToken =
     env?.TURSO_AUTH_TOKEN ||
     (typeof process !== 'undefined' ? process.env?.TURSO_AUTH_TOKEN : undefined) ||
     undefined;
+
+  if (isTursoPlaceholder(url, authToken)) {
+    url = 'file:vcon_data.db';
+    authToken = undefined;
+  }
 
   if (!dbClient || currentDbUrl !== url || currentAuthToken !== (authToken || '')) {
     // If it's a local file URL, make sure the directory exists (only in Node.js runtime)
@@ -33,19 +58,37 @@ export function getDbClient(env?: any): Client {
       }
     }
 
-    dbClient = createClient({
-      url,
-      authToken,
-    });
-    currentDbUrl = url;
-    currentAuthToken = authToken || '';
+    try {
+      dbClient = createClient({
+        url,
+        authToken,
+      });
+      currentDbUrl = url;
+      currentAuthToken = authToken || '';
+    } catch (err) {
+      console.warn('[VCON] Error creating client for url, falling back to local file:vcon_data.db:', err);
+      dbClient = createClient({ url: 'file:vcon_data.db' });
+      currentDbUrl = 'file:vcon_data.db';
+      currentAuthToken = '';
+    }
   }
 
   return dbClient;
 }
 
 export async function initDatabaseSchema(env?: any): Promise<void> {
-  const db = getDbClient(env);
+  let db = getDbClient(env);
+
+  try {
+    // Quick test query to ensure connection is responsive
+    await db.execute('SELECT 1');
+  } catch (probeError) {
+    console.warn('[VCON] Database connection probe failed, falling back to local SQLite file:vcon_data.db:', probeError);
+    currentDbUrl = 'file:vcon_data.db';
+    currentAuthToken = '';
+    dbClient = createClient({ url: 'file:vcon_data.db' });
+    db = dbClient;
+  }
 
   // 1. Admin config table
   await db.execute(`

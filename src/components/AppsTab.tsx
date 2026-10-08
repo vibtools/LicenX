@@ -123,7 +123,7 @@ export const AppsTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-3 font-mono text-xs">
+    <div className="space-y-3 font-sans text-xs">
       {/* Controls Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
         <form onSubmit={handleSearchSubmit} className="flex items-center gap-1.5 flex-1 max-w-md">
@@ -133,13 +133,13 @@ export const AppsTab: React.FC = () => {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search app identifier, display name..."
-              className="w-full pl-7 pr-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+              className="w-full pl-7 pr-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:border-indigo-500/80 focus:outline-none"
             />
             <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-1.5" />
           </div>
           <button
             type="submit"
-            className="px-2 py-1 text-xs rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 transition-colors"
+            className="px-2.5 py-1 text-xs font-medium rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 transition-colors"
           >
             Search
           </button>
@@ -149,7 +149,7 @@ export const AppsTab: React.FC = () => {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-300 focus:outline-none"
+            className="px-2 py-1 text-xs font-sans bg-slate-900 border border-slate-800 rounded text-slate-300 focus:outline-none"
           >
             <option value="all">Status: All</option>
             <option value="active">Active</option>
@@ -186,9 +186,9 @@ export const AppsTab: React.FC = () => {
 
       {/* Bulk Action Bar */}
       {selectedIds.length > 0 && (
-        <div className="p-2 rounded bg-slate-900 border border-slate-800 flex items-center justify-between text-xs text-slate-300">
+        <div className="p-2 rounded bg-slate-900 border border-slate-800 flex items-center justify-between text-xs text-slate-300 font-sans">
           <span>{selectedIds.length} apps selected</span>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 font-medium">
             <button
               onClick={() => handleBulkAction('activate')}
               className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-750 text-emerald-400 border border-slate-700 transition-colors"
@@ -214,10 +214,10 @@ export const AppsTab: React.FC = () => {
 
       {/* Main Apps Table */}
       <div className="border border-slate-800/80 rounded bg-slate-950/50 overflow-x-auto">
-        <table className="w-full text-left font-mono text-xs">
-          <thead className="bg-slate-900/60 border-b border-slate-800/80 text-slate-400 text-[10px] uppercase">
+        <table className="w-full text-left font-sans text-xs">
+          <thead className="bg-slate-900/60 border-b border-slate-800/80 text-xs font-semibold tracking-wider text-slate-400 uppercase font-sans">
             <tr>
-              <th className="py-2 px-2.5 w-6">
+              <th className="py-2.5 px-3 w-6">
                 <input
                   type="checkbox"
                   checked={selectedIds.length > 0 && selectedIds.length === apps.length}
@@ -225,26 +225,26 @@ export const AppsTab: React.FC = () => {
                   className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0"
                 />
               </th>
-              <th className="py-2 px-2.5">App Identifier (Slug)</th>
-              <th className="py-2 px-2.5">Display Name</th>
-              <th className="py-2 px-2.5">Min Version</th>
-              <th className="py-2 px-2.5">Status</th>
-              <th className="py-2 px-2.5">Scoped Licenses</th>
-              <th className="py-2 px-2.5">Notes</th>
-              <th className="py-2 px-2.5 text-right">Actions</th>
+              <th className="py-2.5 px-3">App Identifier (Slug)</th>
+              <th className="py-2.5 px-3">Display Name</th>
+              <th className="py-2.5 px-3">Min Version</th>
+              <th className="py-2.5 px-3">Status</th>
+              <th className="py-2.5 px-3">Scoped Licenses</th>
+              <th className="py-2.5 px-3">Notes</th>
+              <th className="py-2.5 px-3 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/40 text-slate-300 text-[11px]">
+          <tbody className="divide-y divide-slate-800/40 text-slate-300 text-xs">
             {apps.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-slate-500">
+                <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
                   {loading ? 'Loading applications...' : 'No applications found.'}
                 </td>
               </tr>
             ) : (
               apps.map((app) => (
                 <tr key={app.id} className="hover:bg-slate-900/30 transition-colors">
-                  <td className="py-2 px-2.5">
+                  <td className="py-2 px-3">
                     <input
                       type="checkbox"
                       checked={selectedIds.includes(app.id)}
@@ -252,22 +252,22 @@ export const AppsTab: React.FC = () => {
                       className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0"
                     />
                   </td>
-                  <td className="py-2 px-2.5">
-                    <span className="font-medium text-slate-200 select-all font-mono">
+                  <td className="py-2 px-3">
+                    <span className="font-mono text-xs font-medium text-slate-200 select-all tracking-wide">
                       {app.app_slug}
                     </span>
                   </td>
-                  <td className="py-2 px-2.5 text-slate-200 font-medium">
+                  <td className="py-2 px-3 text-slate-200 font-medium">
                     {app.display_name}
                   </td>
-                  <td className="py-2 px-2.5">
-                    <span className="px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800 text-[10px] text-slate-400">
+                  <td className="py-2 px-3">
+                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
                       v{app.min_version || '1.0.0'}
                     </span>
                   </td>
-                  <td className="py-2 px-2.5">
+                  <td className="py-2 px-3">
                     <span
-                      className={`inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-medium uppercase ${
+                      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase font-sans ${
                         app.status === 'active'
                           ? 'bg-emerald-950/30 text-emerald-400 border border-emerald-900/40'
                           : 'bg-slate-900 text-slate-500 border border-slate-800'
@@ -276,21 +276,21 @@ export const AppsTab: React.FC = () => {
                       {app.status}
                     </span>
                   </td>
-                  <td className="py-2 px-2.5">
-                    <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                  <td className="py-2 px-3">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
                       <Key className="w-3 h-3 text-slate-500" />
-                      {app.licenses_count ?? 0} Keys
+                      <span className="font-mono text-slate-300">{app.licenses_count ?? 0}</span> Keys
                     </span>
                   </td>
-                  <td className="py-2 px-2.5 text-slate-400 max-w-xs truncate">
+                  <td className="py-2 px-3 text-slate-400 max-w-xs truncate">
                     {app.description || '—'}
                   </td>
-                  <td className="py-2 px-2.5 text-right">
-                    <div className="flex items-center justify-end gap-1">
+                  <td className="py-2 px-3 text-right">
+                    <div className="flex items-center justify-end gap-1 font-sans">
                       <button
                         onClick={() => handleDownloadConfig(app)}
                         title="Download Client Config (JSON)"
-                        className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 transition-colors text-[10px]"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 font-medium transition-colors text-[11px]"
                       >
                         <Download className="w-3 h-3 text-slate-400" />
                         <span>Config</span>

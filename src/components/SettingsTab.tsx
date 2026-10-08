@@ -149,7 +149,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">
             <Database className="w-4 h-4 text-slate-400" />
-            <span className="font-medium text-slate-200 uppercase">Turso / libSQL Database</span>
+            <span className="font-medium text-slate-300 uppercase">Turso / libSQL Database</span>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
             {hasTursoEnv ? 'TURSO CLOUD CONNECTED' : 'LIBSQL DB PERSISTED'}
@@ -166,7 +166,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">
             <Cloud className="w-4 h-4 text-slate-400" />
-            <span className="font-medium text-slate-200 uppercase">Cloudflare R2 Object Storage</span>
+            <span className="font-medium text-slate-300 uppercase">Cloudflare R2 Object Storage</span>
           </div>
           {r2StatusMessage && (
             <span
@@ -263,7 +263,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-indigo-400" />
-            <span className="font-medium text-slate-200 uppercase">RSA 2048-bit Enterprise Public Key</span>
+            <span className="font-medium text-slate-300 uppercase">RSA 2048-bit Enterprise Public Key</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono">
               High Security
             </span>
@@ -298,7 +298,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">
             <KeyRound className="w-4 h-4 text-slate-400" />
-            <span className="font-medium text-slate-200 uppercase">Change Admin Password</span>
+            <span className="font-medium text-slate-300 uppercase">Change Admin Password</span>
           </div>
           {credMessage && (
             <span
@@ -363,7 +363,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       {/* R2 Backup History */}
       {backups.length > 0 && (
         <div className="p-3.5 rounded bg-slate-900/40 border border-slate-800 space-y-2">
-          <span className="font-medium text-slate-200 uppercase block pb-2 border-b border-slate-800/80">
+          <span className="font-medium text-slate-300 uppercase block pb-2 border-b border-slate-800/80">
             R2 Backup Archive ({backups.length})
           </span>
           <div className="space-y-1">

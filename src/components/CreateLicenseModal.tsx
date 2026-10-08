@@ -100,13 +100,13 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-xs font-mono text-xs">
-      <div className="w-full max-w-lg bg-slate-950 border border-slate-800 rounded-lg shadow-xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-xs font-sans text-xs">
+      <div className="w-full max-w-lg bg-slate-950 border border-slate-800 rounded-lg shadow-xl overflow-hidden font-sans">
         {/* Header */}
-        <div className="p-3 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
+        <div className="p-3.5 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Key className="w-4 h-4 text-slate-400" />
-            <span className="font-medium text-slate-200 uppercase tracking-wider">
+            <span className="font-semibold text-slate-200 text-xs tracking-normal">
               {createdLicense ? 'License Created Successfully' : 'Issue License Key'}
             </span>
           </div>
@@ -120,37 +120,32 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
 
         {/* View 1: License Created Success Details (Modal stays open) */}
         {createdLicense ? (
-          <div className="p-4 space-y-4">
-            <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-900/50 flex items-center gap-2.5 text-emerald-400">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-              <div>
-                <span className="font-semibold block text-emerald-300">License Successfully Generated</span>
-                <span className="text-[11px] text-emerald-400/80">
-                  New license key with security PIN is now active and ready for use.
-                </span>
-              </div>
+          <div className="p-4 space-y-4 font-sans">
+            <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-900/50 flex items-center gap-2 text-emerald-400">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold text-xs text-emerald-300">License Generated Successfully</span>
             </div>
 
             {/* License Key & PIN Card */}
-            <div className="p-3.5 rounded-lg bg-slate-900/60 border border-slate-800 space-y-3">
+            <div className="p-3.5 rounded-lg bg-slate-900/60 border border-slate-800 space-y-3 font-sans">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
-                <span className="text-[10px] uppercase font-medium text-slate-400">License Credentials</span>
-                <span className="px-1.5 py-0.2 rounded bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 text-[10px] font-semibold">
+                <span className="text-xs uppercase font-medium text-slate-400">License Credentials</span>
+                <span className="px-1.5 py-0.5 rounded bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 text-[10px] font-semibold">
                   ACTIVE
                 </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-2 space-y-1">
-                  <span className="text-[10px] text-slate-400 block">License Key</span>
-                  <div className="p-2 rounded bg-slate-950 border border-slate-800 font-mono text-slate-100 font-medium tracking-wider select-all text-sm">
+                  <span className="text-xs text-slate-400 block font-normal">License Key</span>
+                  <div className="p-2.5 rounded bg-slate-950 border border-slate-800 font-mono text-slate-200 font-medium tracking-wider select-all text-sm">
                     {createdLicense.key}
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <span className="text-[10px] text-indigo-300 block font-semibold uppercase">Security PIN</span>
-                  <div className="p-2 rounded bg-indigo-950/40 border border-indigo-700/60 font-mono text-indigo-300 font-bold text-center tracking-widest text-sm select-all">
+                  <span className="text-xs text-indigo-300/90 block font-medium uppercase">Security PIN</span>
+                  <div className="p-2.5 rounded bg-indigo-950/30 border border-indigo-700/50 font-mono text-indigo-300 font-semibold text-center tracking-widest text-sm select-all">
                     {createdLicense.pin || 'N/A'}
                   </div>
                 </div>
@@ -158,27 +153,27 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
 
               {/* Combined Format Preview */}
               <div className="pt-1">
-                <span className="text-[10px] text-slate-500 block mb-1">Clipboard Copy Format:</span>
-                <div className="p-2 rounded bg-slate-950/80 border border-slate-850 text-slate-300 text-[11px] select-all break-all">
+                <span className="text-xs text-slate-400 block mb-1">Clipboard Copy Format:</span>
+                <div className="p-2 rounded bg-slate-950/80 border border-slate-850 text-slate-300 text-xs font-mono select-all break-all">
                   {getCopyText(createdLicense)}
                 </div>
               </div>
 
               {/* Meta details */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-[11px] text-slate-400 border-t border-slate-800/60">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-xs text-slate-400 border-t border-slate-800/60 font-sans">
                 <div>
                   <span className="text-[10px] text-slate-500 block">Tier</span>
-                  <span className="text-slate-300">{createdLicense.tier}</span>
+                  <span className="text-slate-300 font-medium">{createdLicense.tier}</span>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 block">Device Limit</span>
-                  <span className="text-slate-300">
+                  <span className="text-slate-300 font-medium">
                     {createdLicense.device_limit === -1 ? 'Unlimited' : `${createdLicense.device_limit} Device`}
                   </span>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 block">Validity</span>
-                  <span className="text-slate-300">
+                  <span className="text-slate-300 font-medium">
                     {createdLicense.validity_type === 'lifetime'
                       ? 'Lifetime'
                       : `${createdLicense.validity_value} ${createdLicense.validity_type}`}
@@ -230,20 +225,20 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
           </div>
         ) : (
           /* View 2: License Creation Form */
-          <form onSubmit={handleSubmit} className="p-4 space-y-3">
+          <form onSubmit={handleSubmit} className="p-4 space-y-3.5 font-sans">
             {error && (
-              <div className="p-2 text-xs text-rose-400 bg-rose-950/30 border border-rose-900/40 rounded font-mono">
+              <div className="p-2 text-xs text-rose-400 bg-rose-950/30 border border-rose-900/40 rounded">
                 {error}
               </div>
             )}
 
             {/* Target Application Selector */}
             <div>
-              <label className="text-[10px] text-slate-400 block mb-1">Target Application Scope</label>
+              <label className="text-xs font-medium text-slate-400 block mb-1">Target Application Scope</label>
               <select
                 value={selectedAppId}
                 onChange={(e) => setSelectedAppId(e.target.value)}
-                className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
               >
                 <option value="global">Global (All Registered Applications)</option>
                 {apps.map((app) => (
@@ -256,34 +251,34 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
 
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Prefix</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Prefix</label>
                 <input
                   type="text"
                   value={prefix}
                   onChange={(e) => setPrefix(e.target.value.toUpperCase())}
                   placeholder="VCON"
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-mono text-xs focus:border-indigo-500/80 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Custom Key (Optional)</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Custom Key (Optional)</label>
                 <input
                   type="text"
                   value={customKey}
                   onChange={(e) => setCustomKey(e.target.value.toUpperCase())}
                   placeholder="Auto-generated if empty"
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-mono text-xs focus:border-indigo-500/80 focus:outline-none"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Tier</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Tier</label>
                 <select
                   value={tier}
                   onChange={(e) => setTier(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
                 >
                   <option value="Standard">Standard</option>
                   <option value="Pro">Pro</option>
@@ -294,11 +289,11 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Hardware Limit (HWID)</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Hardware Limit (HWID)</label>
                 <select
                   value={deviceLimit}
                   onChange={(e) => setDeviceLimit(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
                 >
                   <option value={1}>1 Machine (Single Device)</option>
                   <option value={2}>2 Machines</option>
@@ -312,11 +307,11 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
 
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Validity Model</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Validity Model</label>
                 <select
                   value={validityType}
                   onChange={(e: any) => setValidityType(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
                 >
                   <option value="daily">Daily Expiry (e.g. 30 days)</option>
                   <option value="hourly">Hourly Clock (e.g. 24h from first run)</option>
@@ -325,57 +320,57 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Duration Units</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Duration Units</label>
                 <input
                   type="number"
                   disabled={validityType === 'lifetime'}
                   value={validityValue}
                   onChange={(e) => setValidityValue(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 disabled:opacity-40 focus:border-indigo-500/80 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans disabled:opacity-40 focus:border-indigo-500/80 focus:outline-none"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Customer Name</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Customer Name</label>
                 <input
                   type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   placeholder="Optional"
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:border-indigo-500/80 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Customer Email</label>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Customer Email</label>
                 <input
                   type="email"
                   value={customerEmail}
                   onChange={(e) => setCustomerEmail(e.target.value)}
                   placeholder="Optional"
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:border-indigo-500/80 focus:outline-none"
                 />
               </div>
             </div>
 
             <div>
-              <label className="text-[10px] text-slate-400 block mb-1">Notes</label>
+              <label className="text-xs font-medium text-slate-400 block mb-1">Notes</label>
               <input
                 type="text"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Internal tracking notes"
-                className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
               />
             </div>
 
-            <div className="pt-2 flex items-center justify-end gap-2">
+            <div className="pt-2 flex items-center justify-end gap-2 font-sans">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
+                className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 font-medium transition-colors"
               >
                 Cancel
               </button>

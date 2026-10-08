@@ -176,7 +176,7 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-mono text-xs text-slate-400 gap-2">
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-sans text-xs text-slate-400 gap-2">
         <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
         Initializing VCON Engine...
       </div>
@@ -204,7 +204,7 @@ export default function App() {
   // Admin Route (/vcon) -> Check if system is initialized
   if (setupStatus && !setupStatus.initialized) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-mono">
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
         <SetupModal
           hasTursoEnv={setupStatus.hasTursoEnv}
           onCompleted={(user) => {
@@ -220,7 +220,7 @@ export default function App() {
   // Admin Route (/vcon) -> If initialized but not logged in
   if (!authenticated) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-mono">
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
         <LoginModal
           onLoginSuccess={async (user) => {
             setUsername(user);
@@ -237,7 +237,7 @@ export default function App() {
 
   // Authenticated Admin Dashboard with Sidebar Layout
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-300 flex font-mono text-xs selection:bg-indigo-950/80 selection:text-slate-200">
+    <div className="min-h-screen bg-slate-950 text-slate-300 flex font-sans text-xs selection:bg-indigo-950/80 selection:text-slate-200 antialiased">
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}

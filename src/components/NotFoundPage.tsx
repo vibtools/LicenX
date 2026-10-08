@@ -52,7 +52,7 @@ export const NotFoundPage: React.FC<NotFoundPageProps> = ({ currentPath, onGoHom
           {/* Right Side: Return to Home Link */}
           <button
             onClick={onGoHome}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-300 hover:text-white font-medium text-xs transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-300 hover:text-slate-200 font-medium text-xs transition-colors cursor-pointer"
           >
             <Home className="w-3.5 h-3.5 text-indigo-400" />
             <span>Portal Home</span>
@@ -98,7 +98,7 @@ export const NotFoundPage: React.FC<NotFoundPageProps> = ({ currentPath, onGoHom
             {/* Primary Action Button: Back to Home */}
             <button
               onClick={onGoHome}
-              className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 border border-indigo-400/30 cursor-pointer"
+              className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 active:scale-[0.98] text-slate-200 font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 border border-indigo-400/30 cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Return to License Portal</span>
@@ -107,7 +107,7 @@ export const NotFoundPage: React.FC<NotFoundPageProps> = ({ currentPath, onGoHom
             {/* Secondary Action: Direct Check Key Shortcut */}
             <button
               onClick={onGoHome}
-              className="w-full py-2.5 px-3 rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-300 hover:text-white font-medium text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              className="w-full py-2.5 px-3 rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-300 hover:text-slate-200 font-medium text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Search className="w-3.5 h-3.5 text-indigo-400" />
               <span>Check License Key</span>

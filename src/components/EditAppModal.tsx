@@ -45,11 +45,11 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-xs font-mono text-xs">
-      <div className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-lg shadow-xl overflow-hidden">
-        <div className="p-3 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
-          <span className="font-medium text-slate-200 uppercase tracking-wider">
-            Edit App: {app.app_slug}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-xs font-sans text-xs">
+      <div className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-lg shadow-xl overflow-hidden font-sans">
+        <div className="p-3.5 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
+          <span className="font-semibold text-slate-200 text-xs tracking-normal">
+            Edit Application: <span className="font-mono text-indigo-300 font-medium">{app.app_slug}</span>
           </span>
           <button
             onClick={onClose}
@@ -59,7 +59,7 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 space-y-3">
+        <form onSubmit={handleSubmit} className="p-4 space-y-3.5 font-sans">
           {error && (
             <div className="p-2 text-xs text-rose-400 bg-rose-950/30 border border-rose-900/40 rounded">
               {error}
@@ -67,33 +67,33 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
           )}
 
           <div>
-            <label className="text-[10px] text-slate-400 block mb-1">Display Name</label>
+            <label className="text-xs font-medium text-slate-400 block mb-1">Display Name</label>
             <input
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:border-indigo-500/80 focus:outline-none"
               required
             />
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label className="text-[10px] text-slate-400 block mb-1">Minimum Version</label>
+              <label className="text-xs font-medium text-slate-400 block mb-1">Minimum Version</label>
               <input
                 type="text"
                 value={minVersion}
                 onChange={(e) => setMinVersion(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-mono text-xs focus:border-indigo-500/80 focus:outline-none"
                 required
               />
             </div>
             <div>
-              <label className="text-[10px] text-slate-400 block mb-1">Status</label>
+              <label className="text-xs font-medium text-slate-400 block mb-1">Status</label>
               <select
                 value={status}
                 onChange={(e: any) => setStatus(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
               >
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
@@ -102,12 +102,12 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
           </div>
 
           <div>
-            <label className="text-[10px] text-slate-400 block mb-1">Description</label>
+            <label className="text-xs font-medium text-slate-400 block mb-1">Description</label>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
+              className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:border-indigo-500/80 focus:outline-none"
             />
           </div>
 
@@ -115,7 +115,7 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
+              className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 font-medium transition-colors"
             >
               Cancel
             </button>

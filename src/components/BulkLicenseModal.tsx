@@ -97,13 +97,13 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-xs font-mono text-xs">
-      <div className="w-full max-w-lg bg-slate-950 border border-slate-800 rounded-lg shadow-xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-xs font-sans text-xs">
+      <div className="w-full max-w-lg bg-slate-950 border border-slate-800 rounded-lg shadow-xl overflow-hidden font-sans">
         {/* Header */}
-        <div className="p-3 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
+        <div className="p-3.5 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-slate-400" />
-            <span className="font-medium text-slate-200 uppercase tracking-wider">
+            <span className="font-semibold text-slate-200 text-xs tracking-normal">
               {result ? 'Batch Licenses Created' : 'Bulk License Generator'}
             </span>
           </div>
@@ -117,32 +117,27 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
 
         {/* View 1: Success Results View (Popup stays open) */}
         {result ? (
-          <div className="p-4 space-y-3.5">
-            <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-900/50 flex items-center gap-2.5 text-emerald-400">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-              <div>
-                <span className="font-semibold block text-emerald-300">
-                  Batch Generated {result.count} Licenses Successfully
-                </span>
-                <span className="text-[11px] text-emerald-400/80">
-                  All {result.count} licenses in this batch share a single 4-digit security PIN.
-                </span>
-              </div>
+          <div className="p-4 space-y-3.5 font-sans">
+            <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-900/50 flex items-center gap-2 text-emerald-400">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold text-xs text-emerald-300">
+                Generated {result.count} Licenses Successfully
+              </span>
             </div>
 
             {/* Batch PIN Card */}
-            <div className="p-3 rounded-lg bg-indigo-950/30 border border-indigo-800/50 flex items-center justify-between">
+            <div className="p-3 rounded-lg bg-indigo-950/30 border border-indigo-800/50 flex items-center justify-between font-sans">
               <div>
-                <span className="text-[10px] text-indigo-300 uppercase font-semibold block">
-                  Batch Security PIN (Assigned to all {result.count} keys)
+                <span className="text-xs text-indigo-300/90 uppercase font-medium block">
+                  Batch Security PIN
                 </span>
-                <span className="text-lg font-bold text-slate-100 tracking-widest font-mono">
+                <span className="text-base font-semibold text-slate-200 tracking-widest font-mono">
                   {result.pin}
                 </span>
               </div>
               <button
                 onClick={handleCopyPinOnly}
-                className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-600 text-slate-100 transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded bg-indigo-600/80 hover:bg-indigo-600 text-slate-100 transition-colors"
               >
                 {copiedPin ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
                 <span>{copiedPin ? 'Copied' : 'Copy PIN'}</span>
@@ -150,7 +145,7 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
             </div>
 
             {result.r2Backup && (
-              <div className="p-2.5 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-300 flex items-center justify-between">
+              <div className="p-2.5 rounded bg-slate-900 border border-slate-800 text-xs text-slate-300 flex items-center justify-between font-sans">
                 <span className="flex items-center gap-1.5">
                   <Cloud className="w-3.5 h-3.5 text-slate-400" />
                   Backed up to Cloudflare R2
@@ -169,12 +164,12 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
             )}
 
             {/* Generated Keys & PIN List Preview */}
-            <div className="space-y-1">
+            <div className="space-y-1 font-sans">
               <div className="flex items-center justify-between">
-                <label className="text-[10px] text-slate-400 block">
+                <label className="text-xs font-medium text-slate-400 block">
                   Generated Licenses & Security PINs ({result.count} items)
                 </label>
-                <span className="text-[10px] text-slate-500">Format: Key PIN: 4-digit</span>
+                <span className="text-xs text-slate-500">Format: Key PIN: 4-digit</span>
               </div>
               <textarea
                 readOnly
@@ -185,10 +180,10 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
             </div>
 
             {/* Bottom Actions */}
-            <div className="pt-2 flex items-center justify-between gap-2">
+            <div className="pt-2 flex items-center justify-between gap-2 font-sans">
               <button
                 onClick={handleDownloadCsv}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 font-medium transition-colors"
               >
                 <Download className="w-3.5 h-3.5 text-slate-400" />
                 <span>Export CSV (with PIN)</span>
@@ -197,7 +192,7 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   onClick={onClose}
-                  className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
+                  className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 font-medium transition-colors"
                 >
                   Close
                 </button>
@@ -224,7 +219,7 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
           </div>
         ) : (
           /* View 2: Generation Form */
-          <form onSubmit={handleGenerate} className="p-4 space-y-3">
+          <form onSubmit={handleGenerate} className="p-4 space-y-3.5 font-sans">
             {error && (
               <div className="p-2 text-xs text-rose-400 bg-rose-950/30 border border-rose-900/40 rounded">
                 {error}
@@ -232,11 +227,11 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
             )}
 
             <div>
-              <label className="text-[10px] text-slate-400 block mb-1">Target Application Scope</label>
+              <label className="text-xs font-medium text-slate-400 block mb-1">Target Application Scope</label>
               <select
                 value={selectedAppId}
                 onChange={(e) => setSelectedAppId(e.target.value)}
-                className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none"
+                className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:outline-none"
               >
                 <option value="global">Global (All Applications)</option>
                 {apps.map((app) => (

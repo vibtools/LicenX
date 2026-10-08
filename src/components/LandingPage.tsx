@@ -16,6 +16,7 @@ import {
   User,
   Activity,
   ArrowRight,
+  ArrowLeft,
   ExternalLink,
   Smartphone,
   Cpu,
@@ -26,6 +27,9 @@ import {
   Mail,
   Send,
   MessageSquare,
+  Copy,
+  Check,
+  Layers,
 } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { SiteSettings, DEFAULT_SITE_SETTINGS } from '../types';
@@ -43,6 +47,7 @@ interface AnalysisData {
     status: string;
     tier: string;
     app_name: string;
+    app_slug?: string | null;
     device_limit: number;
     validity_type: string;
     validity_value: number;
@@ -83,7 +88,23 @@ export const LandingPage: React.FC = () => {
   // Analysis Page State
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetError, setResetError] = useState('');
   const [resetSuccessMessage, setResetSuccessMessage] = useState('');
+  const [copiedLicenseKey, setCopiedLicenseKey] = useState(false);
+  const [copiedHwid, setCopiedHwid] = useState<string | null>(null);
+
+  const handleCopyLicenseKey = (key: string) => {
+    navigator.clipboard.writeText(key);
+    setCopiedLicenseKey(true);
+    setTimeout(() => setCopiedLicenseKey(false), 2000);
+  };
+
+  const handleCopyHwid = (hwid: string) => {
+    navigator.clipboard.writeText(hwid);
+    setCopiedHwid(hwid);
+    setTimeout(() => setCopiedHwid(null), 1500);
+  };
 
   // Site Settings State (Controlled from Admin Site Settings)
   const [siteSettings, setSiteSettings] = useState<SiteSettings>(DEFAULT_SITE_SETTINGS);
@@ -160,19 +181,19 @@ export const LandingPage: React.FC = () => {
   // 3. User Self-Service Device Reset Handler
   const handleResetDevices = async () => {
     if (!analysis) return;
-    if (
-      !confirm(
-        'Are you sure you want to reset all devices?\n\nThis will instantly disconnect all logged-in machines, allowing you to activate fresh on a new device.'
-      )
-    ) {
+    if (!confirmReset) {
+      setConfirmReset(true);
+      setResetError('');
       return;
     }
 
     setResetting(true);
     setResetSuccessMessage('');
+    setResetError('');
     try {
       const res = await api.resetUserControl(controlKey.trim(), controlPin.trim());
       setResetSuccessMessage(res.message || 'All devices reset successfully!');
+      setConfirmReset(false);
 
       // Refresh analysis state
       setAnalysis((prev) =>
@@ -193,51 +214,105 @@ export const LandingPage: React.FC = () => {
         setCheckResult((prev) => (prev ? { ...prev, active_device_count: 0 } : null));
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to reset devices.');
+      setResetError(err.message || 'Failed to reset devices.');
     } finally {
       setResetting(false);
     }
   };
 
-  // Format Helper for Usage & Validity Time
+  // Format Helper for Usage & Validity Time - 100% Real Accurate Logic
   const formatTimeDetails = (license: AnalysisData['license']) => {
     const now = Date.now();
-    const createdDate = new Date(license.created_at).toLocaleDateString('en-US', {
+    const createdDate = new Date(Number(license.created_at)).toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
     });
 
-    // Time used calculation
-    const startTime = license.activated_at || license.created_at;
-    const elapsedMs = Math.max(0, now - startTime);
-    const elapsedHours = Math.floor(elapsedMs / (3600 * 1000));
-    const elapsedDays = Math.floor(elapsedHours / 24);
-    const timeUsedStr = elapsedDays > 0 ? `${elapsedDays}d ${elapsedHours % 24}h` : `${elapsedHours}h`;
+    const isActivated = !!license.activated_at;
+    const isExpired = license.status === 'expired' || (!!license.expires_at && now > Number(license.expires_at));
+    const isRevoked = license.status === 'revoked';
+    const isSuspended = license.status === 'suspended';
 
-    // Remaining time calculation
-    let validityTotalStr = 'Lifetime';
+    // 1. Precise Time Used: ONLY counts if actually activated!
+    let timeUsedStr = '0h (Unactivated)';
+    let activatedDateStr = 'Pending Activation';
+
+    if (license.activated_at) {
+      const actTime = Number(license.activated_at);
+      activatedDateStr = new Date(actTime).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+
+      // If expired, cap elapsed at expires_at so it doesn't inflate into the future
+      const endTime = isExpired && license.expires_at ? Number(license.expires_at) : now;
+      const elapsedMs = Math.max(0, endTime - actTime);
+      const elapsedMinutes = Math.floor(elapsedMs / (60 * 1000));
+      const elapsedHours = Math.floor(elapsedMs / (3600 * 1000));
+      const elapsedDays = Math.floor(elapsedHours / 24);
+
+      if (isExpired) {
+        if (elapsedDays > 0) {
+          timeUsedStr = `${elapsedDays}d ${elapsedHours % 24}h used (Expired)`;
+        } else if (elapsedHours > 0) {
+          timeUsedStr = `${elapsedHours}h ${elapsedMinutes % 60}m used (Expired)`;
+        } else {
+          timeUsedStr = `${Math.max(1, elapsedMinutes)}m used (Expired)`;
+        }
+      } else {
+        if (elapsedDays > 0) {
+          timeUsedStr = `${elapsedDays}d ${elapsedHours % 24}h used`;
+        } else if (elapsedHours > 0) {
+          timeUsedStr = `${elapsedHours}h ${elapsedMinutes % 60}m used`;
+        } else {
+          timeUsedStr = `${Math.max(1, elapsedMinutes)}m used`;
+        }
+      }
+    }
+
+    // 2. Remaining time calculation
+    let validityTotalStr = 'Lifetime Access';
     let remainingStr = 'Unlimited';
 
-    if (license.validity_type === 'hourly') {
-      validityTotalStr = `${license.validity_value} Hours`;
+    const val = Number(license.validity_value) || 0;
+    const unitHourly = val === 1 ? 'Hour' : 'Hours';
+    const unitDaily = val === 1 ? 'Day' : 'Days';
+
+    if (isRevoked) {
+      remainingStr = 'Revoked';
+      validityTotalStr = 'Access Revoked';
+    } else if (isSuspended) {
+      remainingStr = 'Suspended';
+      validityTotalStr = 'Temporarily Suspended';
+    } else if (isExpired) {
+      remainingStr = 'Expired';
+      if (license.validity_type === 'hourly') {
+        validityTotalStr = `${val} ${unitHourly} (Expired)`;
+      } else if (license.validity_type === 'daily') {
+        validityTotalStr = `${val} ${unitDaily} (Expired)`;
+      } else {
+        validityTotalStr = 'Expired';
+      }
+    } else if (license.validity_type === 'hourly') {
+      validityTotalStr = `${val} ${unitHourly}`;
       if (license.expires_at) {
-        const diff = license.expires_at - now;
+        const diff = Number(license.expires_at) - now;
         if (diff <= 0) {
           remainingStr = 'Expired';
         } else {
           const remHours = Math.floor(diff / (3600 * 1000));
-          remainingStr = `${remHours}h`;
+          const remMinutes = Math.floor((diff % (3600 * 1000)) / (60 * 1000));
+          remainingStr = remHours > 0 ? `${remHours}h ${remMinutes}m` : `${remMinutes}m`;
         }
       } else {
-        remainingStr = `${license.validity_value}h (Not activated yet)`;
+        remainingStr = `${val} ${unitHourly} (Starts on Login)`;
       }
     } else if (license.validity_type === 'daily') {
-      validityTotalStr = `${license.validity_value} Days`;
+      validityTotalStr = `${val} ${unitDaily}`;
       if (license.expires_at) {
-        const diff = license.expires_at - now;
+        const diff = Number(license.expires_at) - now;
         if (diff <= 0) {
           remainingStr = 'Expired';
         } else {
@@ -246,44 +321,45 @@ export const LandingPage: React.FC = () => {
           remainingStr = remDays > 0 ? `${remDays}d ${remHours % 24}h` : `${remHours}h`;
         }
       } else {
-        remainingStr = `${license.validity_value} Days`;
+        remainingStr = `${val} ${unitDaily} (Starts on Login)`;
       }
     }
 
-    return { createdDate, timeUsedStr, validityTotalStr, remainingStr };
+    return {
+      createdDate,
+      activatedDateStr,
+      isActivated,
+      isExpired,
+      timeUsedStr,
+      validityTotalStr,
+      remainingStr,
+    };
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col font-mono text-xs selection:bg-indigo-600/30">
+    <div className="min-h-screen bg-slate-950 text-slate-300 flex flex-col font-mono text-xs selection:bg-indigo-600/20">
       {/* 1. Header: Logo, SiteName & Buy License CTA Button */}
       <header className="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md sticky top-0 z-30">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div className="max-w-2xl mx-auto px-3.5 h-12 flex items-center justify-between">
           {/* Logo & Site Name */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {siteSettings.logoUrl ? (
               <img
                 src={siteSettings.logoUrl}
                 alt={siteSettings.siteName || 'Logo'}
-                className="w-7 h-7 object-contain rounded-lg border border-slate-800 bg-slate-900"
+                className="w-6 h-6 object-contain rounded border border-slate-800 bg-slate-900"
                 onError={(e) => {
                   (e.target as HTMLElement).style.display = 'none';
                 }}
               />
             ) : (
-              <div className="w-7 h-7 rounded-lg bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
-                <ShieldCheck className="w-4 h-4" />
+              <div className="w-6 h-6 rounded bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400/90">
+                <ShieldCheck className="w-3.5 h-3.5" />
               </div>
             )}
-            <div className="flex flex-col">
-              <span className="font-bold text-sm tracking-wide text-slate-100">
-                {siteSettings.siteName || 'LicenX'}
-              </span>
-              {siteSettings.siteTagline && (
-                <span className="text-[9px] text-slate-500 -mt-0.5 max-w-[200px] sm:max-w-xs truncate hidden sm:block">
-                  {siteSettings.siteTagline}
-                </span>
-              )}
-            </div>
+            <span className="font-semibold text-xs tracking-wide text-slate-200">
+              {siteSettings.siteName || 'LicenX'}
+            </span>
           </div>
 
           {/* Right Side: Buy License CTA Button */}
@@ -291,156 +367,332 @@ export const LandingPage: React.FC = () => {
             href={siteSettings.buyLicenseUrl || '#'}
             target={siteSettings.buyLicenseUrl && siteSettings.buyLicenseUrl !== '#' ? '_blank' : undefined}
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-medium text-xs transition-colors shadow-sm"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600/90 hover:bg-indigo-600 active:bg-indigo-700 text-slate-100 font-medium text-[11px] transition-colors shadow-sm"
           >
             <span>Buy License</span>
-            <ExternalLink className="w-3 h-3 opacity-80" />
+            <ExternalLink className="w-2.5 h-2.5 opacity-80" />
           </a>
         </div>
       </header>
 
       {/* Announcement / Notice Banner */}
       {siteSettings.noticeBannerEnabled && siteSettings.noticeBanner && (
-        <div className="bg-amber-500/15 border-b border-amber-500/30 text-amber-300 py-2 px-4 text-xs">
+        <div className="bg-amber-500/10 border-b border-amber-500/20 text-amber-300/90 py-2 px-4 text-xs">
           <div className="max-w-2xl mx-auto flex items-center gap-2">
-            <Megaphone className="w-4 h-4 text-amber-400 shrink-0" />
+            <Megaphone className="w-4 h-4 text-amber-400/80 shrink-0" />
             <span className="font-medium text-[11px] leading-tight">{siteSettings.noticeBanner}</span>
           </div>
         </div>
       )}
 
       {/* Main Content Area - Mobile-Friendly First, Compact & Clean */}
-      <main className="max-w-md w-full mx-auto px-4 py-8 flex-1 flex flex-col justify-center space-y-4">
+      <main
+        className={`${
+          analysis ? 'max-w-lg' : 'max-w-md'
+        } w-full mx-auto px-3.5 py-6 flex-1 flex flex-col justify-center space-y-3 transition-all duration-200`}
+      >
         {/* If user is inside the Analysis / Self-Service View */}
         {analysis ? (
-          <div className="space-y-4 animate-in fade-in duration-200">
+          <div className="space-y-3 animate-in fade-in duration-200">
             {/* Top Bar with Back action */}
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-slate-100 text-xs uppercase tracking-wide">
+                <div className="w-5 h-5 rounded bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400/90">
+                  <ShieldCheck className="w-3 h-3" />
+                </div>
+                <span className="font-semibold text-slate-200 text-xs tracking-wide">
                   License Control Panel
                 </span>
                 <span
-                  className={`px-1.5 py-0.2 rounded text-[10px] font-bold uppercase ${
-                    analysis.license.status === 'active'
-                      ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/50'
-                      : 'bg-rose-950/40 text-rose-400 border border-rose-900/50'
+                  className={`px-1.5 py-0.2 rounded-full text-[9px] font-semibold uppercase tracking-wider flex items-center gap-1 ${
+                    analysis.license.status === 'active' && !(analysis.license.expires_at && Date.now() > analysis.license.expires_at)
+                      ? 'bg-emerald-950/40 text-emerald-400/90 border border-emerald-900/50'
+                      : 'bg-rose-950/40 text-rose-400/90 border border-rose-900/50'
                   }`}
                 >
-                  {analysis.license.status}
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      analysis.license.status === 'active' && !(analysis.license.expires_at && Date.now() > analysis.license.expires_at)
+                        ? 'bg-emerald-500/80'
+                        : 'bg-rose-500/80'
+                    }`}
+                  />
+                  {analysis.license.status === 'active' && analysis.license.expires_at && Date.now() > analysis.license.expires_at
+                    ? 'expired'
+                    : analysis.license.status}
                 </span>
               </div>
               <button
                 onClick={() => {
                   setAnalysis(null);
                   setResetSuccessMessage('');
+                  setConfirmReset(false);
+                  setResetError('');
                 }}
-                className="text-[11px] text-slate-400 hover:text-slate-200 underline transition-colors"
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-slate-400 hover:text-slate-200 bg-slate-900 hover:bg-slate-850 border border-slate-800 transition-colors cursor-pointer"
               >
-                Exit Control
+                <ArrowLeft className="w-2.5 h-2.5" />
+                <span>Exit</span>
               </button>
             </div>
 
             {/* Reset Success Alert */}
             {resetSuccessMessage && (
-              <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-900/50 flex items-center gap-2 text-emerald-300 text-xs">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>{resetSuccessMessage}</span>
+              <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-900/40 flex items-center gap-2 text-emerald-300 text-[11px] animate-in fade-in">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400/90 shrink-0" />
+                <span className="font-medium">{resetSuccessMessage}</span>
               </div>
             )}
 
-            {/* License Overview & Validity Stats */}
+            {/* License Key & Registered Identity Card */}
+            <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/90 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400 flex items-center gap-1">
+                  <Key className="w-3 h-3 text-indigo-400/90" />
+                  <span>License Key</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCopyLicenseKey(analysis.license.key)}
+                  className="flex items-center gap-1 text-[10px] font-medium text-indigo-400/90 hover:text-indigo-300 px-1.5 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 transition-colors cursor-pointer"
+                  title="Copy license key"
+                >
+                  {copiedLicenseKey ? (
+                    <>
+                      <Check className="w-2.5 h-2.5 text-emerald-400/90" />
+                      <span className="text-emerald-400/90">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-2.5 h-2.5" />
+                      <span>Copy Key</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="font-mono text-slate-200 font-semibold tracking-wider select-all text-xs bg-slate-950 px-2.5 py-1.5 rounded border border-slate-850">
+                {analysis.license.key}
+              </div>
+
+              {analysis.license.customer_name && (
+                <div className="pt-1 border-t border-slate-850/80 flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400 flex items-center gap-1">
+                    <User className="w-3 h-3 text-slate-400" />
+                    <span>Registered to:</span>
+                  </span>
+                  <div className="text-right truncate">
+                    <span className="font-semibold text-slate-300">
+                      {analysis.license.customer_name}
+                    </span>
+                    {analysis.license.customer_email && (
+                      <span className="text-slate-400 text-[9px] ml-1">
+                        ({analysis.license.customer_email})
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Smart Professional Info Cards Grid */}
             {(() => {
               const times = formatTimeDetails(analysis.license);
               return (
-                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase block mb-1">License Key</span>
-                    <div className="font-mono text-slate-100 font-bold tracking-wider select-all text-xs bg-slate-950 p-2 rounded border border-slate-850">
-                      {analysis.license.key}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-[11px]">
-                    <div className="bg-slate-950/70 p-2 rounded border border-slate-850">
-                      <span className="text-[10px] text-slate-500 block">Created On</span>
-                      <span className="text-slate-200 font-medium">{times.createdDate}</span>
-                    </div>
-
-                    <div className="bg-slate-950/70 p-2 rounded border border-slate-850">
-                      <span className="text-[10px] text-slate-500 block">App & Tier</span>
-                      <span className="text-slate-200 font-medium">
-                        {analysis.license.app_name} ({analysis.license.tier})
+                <div className="grid grid-cols-2 gap-2">
+                  {/* Card 1: Application & Plan */}
+                  <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/90 flex flex-col justify-between space-y-1.5 hover:border-slate-700/80 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400">
+                        Application
                       </span>
+                      <div className="w-4 h-4 rounded bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400/90">
+                        <Layers className="w-2.5 h-2.5" />
+                      </div>
                     </div>
-
-                    <div className="bg-slate-950/70 p-2 rounded border border-slate-850">
-                      <span className="text-[10px] text-slate-500 block">Time Used</span>
-                      <span className="text-amber-400/90 font-medium">{times.timeUsedStr} used</span>
-                    </div>
-
-                    <div className="bg-slate-950/70 p-2 rounded border border-slate-850">
-                      <span className="text-[10px] text-slate-500 block">Valid Remaining</span>
-                      <span className="text-indigo-300 font-medium">{times.remainingStr}</span>
+                    <div>
+                      <div className="text-xs font-semibold text-slate-200 truncate">
+                        {analysis.license.app_name || 'All Applications'}
+                      </div>
+                      <div className="mt-1 flex items-center gap-1">
+                        <span className="text-[9px] font-semibold uppercase tracking-wider px-1 py-0.2 rounded bg-indigo-500/10 text-indigo-300/90 border border-indigo-500/20">
+                          {analysis.license.tier} Plan
+                        </span>
+                        {analysis.license.app_slug && analysis.license.app_slug !== 'global' && analysis.license.app_slug !== 'all' ? (
+                          <span className="text-[9px] text-slate-400 font-mono">
+                            ({analysis.license.app_slug})
+                          </span>
+                        ) : (
+                          <span className="text-[9px] text-slate-400 font-mono">
+                            (Global Scope)
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {analysis.license.customer_name && (
-                    <div className="pt-1 text-[11px] text-slate-400 border-t border-slate-800/80">
-                      <span className="text-slate-500">Registered to:</span>{' '}
-                      <span className="text-slate-300">{analysis.license.customer_name}</span>
-                      {analysis.license.customer_email && (
-                        <span className="text-slate-500"> ({analysis.license.customer_email})</span>
-                      )}
+                  {/* Card 2: Hardware Slots & Capacity */}
+                  <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/90 flex flex-col justify-between space-y-1.5 hover:border-slate-700/80 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400">
+                        Hardware Slots
+                      </span>
+                      <div className="w-4 h-4 rounded bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400/90">
+                        <Cpu className="w-2.5 h-2.5" />
+                      </div>
                     </div>
-                  )}
+                    <div>
+                      <div className="text-xs font-semibold text-slate-200">
+                        {analysis.devices.length} /{' '}
+                        {analysis.license.device_limit === -1 ? '∞' : analysis.license.device_limit}
+                        <span className="text-[10px] text-slate-400 font-normal ml-1">bound</span>
+                      </div>
+                      <div className="mt-1">
+                        {analysis.license.device_limit === -1 ? (
+                          <span className="text-[9px] font-medium text-emerald-400/90">
+                            Unlimited Slots
+                          </span>
+                        ) : analysis.devices.length >= analysis.license.device_limit ? (
+                          <span className="text-[9px] font-medium text-amber-300/90">
+                            All Slots Bound
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-medium text-emerald-400/90">
+                            {analysis.license.device_limit - analysis.devices.length}{' '}
+                            {analysis.license.device_limit - analysis.devices.length === 1 ? 'Slot' : 'Slots'} Available
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Remaining Time & Validity */}
+                  <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/90 flex flex-col justify-between space-y-1.5 hover:border-slate-700/80 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400">
+                        Remaining Time
+                      </span>
+                      <div className="w-4 h-4 rounded bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400/90">
+                        <Clock className="w-2.5 h-2.5" />
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className={`text-xs font-semibold ${
+                          times.isExpired || times.remainingStr === 'Expired'
+                            ? 'text-rose-400/90'
+                            : 'text-emerald-400/90'
+                        }`}
+                      >
+                        {times.remainingStr}
+                      </div>
+                      <div className="mt-1 text-[9px] text-slate-400 truncate">
+                        {times.validityTotalStr}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 4: Activation Status & Usage */}
+                  <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/90 flex flex-col justify-between space-y-1.5 hover:border-slate-700/80 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400">
+                        Activation Status
+                      </span>
+                      <div className="w-4 h-4 rounded bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400/90">
+                        <Activity className="w-2.5 h-2.5" />
+                      </div>
+                    </div>
+                    <div>
+                      <div className={`text-xs font-semibold ${times.isActivated ? 'text-amber-300/85' : 'text-slate-300'}`}>
+                        {times.timeUsedStr}
+                      </div>
+                      <div className="mt-1 text-[9px] text-slate-500 truncate">
+                        {times.isActivated
+                          ? `Activated: ${times.activatedDateStr}`
+                          : `Issued: ${times.createdDate}`}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               );
             })()}
 
-            {/* Connected Devices List */}
-            <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/80">
-                <span className="font-semibold text-slate-200 text-xs">
-                  Active Connected Devices
-                </span>
-                <span className="text-[11px] text-indigo-400 font-medium">
-                  {analysis.devices.length} /{' '}
-                  {analysis.license.device_limit === -1 ? '∞' : analysis.license.device_limit}
+            {/* Connected Hardware Devices Card */}
+            <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/90 space-y-2">
+              <div className="flex items-center justify-between pb-1.5 border-b border-slate-850">
+                <div className="flex items-center gap-1.5">
+                  <Laptop className="w-3.5 h-3.5 text-indigo-400/90" />
+                  <span className="font-semibold text-slate-200 text-xs">
+                    Connected Hardware Devices
+                  </span>
+                </div>
+                <span className="text-[9px] font-medium text-slate-400 bg-slate-950 px-1.5 py-0.2 rounded border border-slate-850">
+                  {analysis.devices.length} Active
                 </span>
               </div>
 
               {analysis.devices.length === 0 ? (
-                <div className="py-4 text-center text-slate-500 text-xs">
-                  No devices currently bound. License is fresh and ready for new device login.
+                <div className="py-4 text-center space-y-1">
+                  <div className="w-7 h-7 rounded-full bg-slate-950 border border-slate-850 flex items-center justify-center mx-auto text-slate-500 mb-1">
+                    <Laptop className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="text-xs text-slate-400 font-medium">
+                    No connected devices
+                  </div>
                 </div>
               ) : (
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                   {analysis.devices.map((dev, idx) => (
                     <div
                       key={dev.id || idx}
-                      className="p-2.5 rounded-lg bg-slate-950 border border-slate-850 space-y-1 text-[11px]"
+                      className="p-2 rounded-lg bg-slate-950 border border-slate-850 hover:border-slate-800 space-y-1 transition-colors"
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-slate-200 font-medium">
-                          <Laptop className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{dev.device_name || 'Machine ' + (idx + 1)}</span>
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5 font-semibold text-slate-200">
+                          <Laptop className="w-3 h-3 text-slate-400" />
+                          <span>{dev.device_name || `Hardware Device #${idx + 1}`}</span>
                         </div>
-                        <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                          Logged In
+                        <span className="flex items-center gap-1 text-[9px] text-emerald-400/90 font-medium bg-emerald-950/40 px-1.5 py-0.2 rounded border border-emerald-900/50">
+                          <span className="w-1 h-1 rounded-full bg-emerald-500/80" />
+                          Active Lock
                         </span>
                       </div>
 
-                      <div className="text-[10px] text-slate-400 flex items-center justify-between">
-                        <span>{dev.os_info || 'Client OS'}</span>
-                        <span className="text-slate-500 font-mono">
-                          HWID: {dev.hwid.slice(0, 14)}...
-                        </span>
+                      <div className="text-[10px] text-slate-400 flex items-center justify-between font-mono">
+                        <span className="text-slate-400 font-sans">{dev.os_info || 'Client Device'}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-400 font-mono bg-slate-900 px-1.5 py-0.2 rounded border border-slate-850 text-[9px]">
+                            {dev.hwid.length > 20 ? `${dev.hwid.slice(0, 18)}...` : dev.hwid}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyHwid(dev.hwid)}
+                            className="p-1 rounded text-slate-400 hover:text-slate-200 bg-slate-900 hover:bg-slate-850 border border-slate-850 transition-colors cursor-pointer"
+                            title="Copy HWID Hash"
+                          >
+                            {copiedHwid === dev.hwid ? (
+                              <Check className="w-2.5 h-2.5 text-emerald-400/90" />
+                            ) : (
+                              <Copy className="w-2.5 h-2.5" />
+                            )}
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="text-[9px] text-slate-500">
-                        First bound: {new Date(dev.first_bound_at).toLocaleString()}
+                      <div className="text-[9px] text-slate-500 pt-0.5 border-t border-slate-900 flex items-center justify-between">
+                        <span>Bound: {new Date(Number(dev.first_bound_at)).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        {dev.ip_address && (
+                          <span className="font-mono text-slate-400">IP: {dev.ip_address}</span>
+                        )}
+                        {dev.last_ping_at && (
+                          <span>
+                            Ping:{' '}
+                            {new Date(Number(dev.last_ping_at)).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -448,86 +700,110 @@ export const LandingPage: React.FC = () => {
               )}
             </div>
 
-            {/* MAIN FOCUSED "RESET" CTA BUTTON */}
-            <div className="pt-1">
-              <button
-                onClick={handleResetDevices}
-                disabled={resetting || analysis.devices.length === 0}
-                className="w-full py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-rose-950/40 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {resetting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <RotateCcw className="w-4 h-4" />
-                )}
-                <span>Reset All Devices & Force Logout</span>
-              </button>
-              <p className="text-[10px] text-slate-500 text-center mt-1.5 leading-relaxed">
-                Disconnects all bound machines so you can immediately login on another device.
-              </p>
+            {/* Smart Compact Reset Action CTA Card */}
+            <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/90 space-y-1.5">
+              {resetError && (
+                <div className="p-2 rounded-lg bg-rose-950/40 border border-rose-800/60 flex items-center gap-2 text-rose-300 text-[11px]">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400/90 shrink-0" />
+                  <span>{resetError}</span>
+                </div>
+              )}
+
+              {confirmReset ? (
+                <div className="p-2 rounded-lg bg-rose-950/30 border border-rose-900/50 space-y-1.5 text-center animate-in fade-in">
+                  <span className="text-[11px] font-semibold text-rose-300 block">
+                    Disconnect all {analysis.devices.length} machines and free license slots?
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmReset(false)}
+                      className="flex-1 py-1 px-2.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-[11px] border border-slate-700 transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetDevices}
+                      disabled={resetting}
+                      className="flex-1 py-1 px-2.5 rounded bg-rose-600/90 hover:bg-rose-600 text-slate-100 font-semibold text-[11px] uppercase tracking-wider flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                    >
+                      {resetting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                      <span>Yes, Reset</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleResetDevices}
+                  disabled={resetting || analysis.devices.length === 0}
+                  className="w-full py-2 px-3 rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-slate-100 font-semibold text-xs tracking-wider uppercase transition-all shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer border border-rose-500/20"
+                >
+                  {resetting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  )}
+                  <span>Reset All Bound Devices</span>
+                </button>
+              )}
             </div>
           </div>
         ) : (
           /* Default Public View: Check License Box & Control Button */
-          <div className="space-y-4">
+          <div className="space-y-3">
             {/* 1. "Check License" Box */}
-            <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 shadow-xl space-y-3.5">
-              <div className="flex items-center gap-2 pb-1 border-b border-slate-800/80">
-                <Search className="w-4 h-4 text-indigo-400" />
-                <span className="font-semibold text-slate-100 text-xs uppercase tracking-wide">
+            <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 shadow-md space-y-2.5">
+              <div className="flex items-center gap-1.5 pb-1 border-b border-slate-800/80">
+                <Search className="w-3.5 h-3.5 text-indigo-400/90" />
+                <span className="font-semibold text-slate-200 text-xs uppercase tracking-wide">
                   Check License
                 </span>
               </div>
 
-              <form onSubmit={handleQuickCheck} className="space-y-3">
+              <form onSubmit={handleQuickCheck} className="space-y-2">
                 <div>
-                  <label className="text-[11px] text-slate-400 block mb-1 font-medium">
-                    Enter License Key
-                  </label>
                   <input
                     type="text"
                     value={checkKey}
                     onChange={(e) => setCheckKey(e.target.value.toUpperCase())}
                     placeholder="VCON-XXXX-XXXX-XXXX"
                     required
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 placeholder-slate-600 focus:border-indigo-500 focus:outline-none text-xs tracking-wider"
+                    className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-500 focus:border-indigo-500/60 focus:outline-none text-xs tracking-wider font-mono"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={checking || !checkKey.trim()}
-                  className="w-full py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-medium text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
+                  className="w-full py-1.5 px-3 rounded-lg bg-indigo-600/90 hover:bg-indigo-600 active:bg-indigo-700 text-slate-100 font-medium text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
                 >
-                  {checking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  {checking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
                   <span>Check License</span>
                 </button>
               </form>
 
               {/* Error Message */}
               {checkError && (
-                <div className="p-2.5 rounded-lg bg-rose-950/30 border border-rose-900/50 flex items-center gap-2 text-rose-300 text-xs">
-                  <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <div className="p-2 rounded-lg bg-rose-950/30 border border-rose-900/50 flex items-center gap-2 text-rose-300 text-[11px]">
+                  <XCircle className="w-3.5 h-3.5 text-rose-400/90 shrink-0" />
                   <span>{checkError}</span>
                 </div>
               )}
 
               {/* Check Result: Shows ONLY 3 INFO: Status, Device Limit, Active Device Count */}
               {checkResult && (
-                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 animate-in fade-in duration-150">
-                  <span className="text-[10px] text-slate-500 uppercase block font-semibold">
-                    License Status Overview
-                  </span>
-
-                  <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-850 space-y-2 animate-in fade-in duration-150">
+                  <div className="grid grid-cols-3 gap-1.5 text-center">
                     {/* 1. Status */}
-                    <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-850">
-                      <span className="text-[10px] text-slate-500 block mb-0.5">Status</span>
+                    <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
+                      <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Status</span>
                       <span
-                        className={`text-xs font-bold uppercase ${
+                        className={`text-[11px] font-semibold uppercase ${
                           checkResult.status === 'active'
-                            ? 'text-emerald-400'
-                            : 'text-rose-400'
+                            ? 'text-emerald-400/90'
+                            : 'text-rose-400/90'
                         }`}
                       >
                         {checkResult.status}
@@ -535,25 +811,24 @@ export const LandingPage: React.FC = () => {
                     </div>
 
                     {/* 2. Device Limit */}
-                    <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-850">
-                      <span className="text-[10px] text-slate-500 block mb-0.5">Device Limit</span>
-                      <span className="text-xs font-bold text-slate-200">
+                    <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
+                      <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Limit</span>
+                      <span className="text-[11px] font-semibold text-slate-300">
                         {checkResult.device_limit === -1 ? 'Unlimited' : `${checkResult.device_limit}`}
                       </span>
                     </div>
 
                     {/* 3. Active Device Count */}
-                    <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-850">
-                      <span className="text-[10px] text-slate-500 block mb-0.5">Active Devices</span>
-                      <span className="text-xs font-bold text-indigo-400">
+                    <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
+                      <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Active</span>
+                      <span className="text-[11px] font-semibold text-indigo-300/90">
                         {checkResult.active_device_count}
                       </span>
                     </div>
                   </div>
 
-                  {/* Quick link into Control from Check Result */}
-                  <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-[11px]">
-                    <span className="text-slate-400">Need to reset devices or view details?</span>
+                  {/* Clean direct action into Control from Check Result */}
+                  <div className="pt-1.5 border-t border-slate-900 flex justify-end">
                     <button
                       type="button"
                       onClick={() => {
@@ -561,7 +836,7 @@ export const LandingPage: React.FC = () => {
                         setControlKey(checkKey.trim().toUpperCase());
                         setControlError('');
                       }}
-                      className="text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                      className="text-indigo-400/90 hover:text-indigo-300 font-semibold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
                     >
                       <span>Open Control</span>
                       <ArrowRight className="w-3 h-3" />
@@ -571,9 +846,8 @@ export const LandingPage: React.FC = () => {
               )}
             </div>
 
-            {/* 2. "Control" Prominent, User-Friendly CTA Button below Check License */}
-            <div className="space-y-2.5 pt-1">
-              {/* Genuine, Prominent Action CTA Button */}
+            {/* 2. "Control" CTA Button below Check License */}
+            <div className="space-y-2">
               <button
                 type="button"
                 onClick={() => {
@@ -584,74 +858,59 @@ export const LandingPage: React.FC = () => {
                     setControlKey(checkKey.trim().toUpperCase());
                   }
                 }}
-                className={`w-full py-3.5 px-4 rounded-xl font-bold text-sm tracking-wide transition-all duration-200 flex items-center justify-between shadow-lg cursor-pointer active:scale-[0.98] ${
+                className={`w-full py-2.5 px-3.5 rounded-xl font-semibold text-xs tracking-wide transition-all duration-200 flex items-center justify-between shadow-sm cursor-pointer active:scale-[0.99] ${
                   showControlForm
-                    ? 'bg-slate-800 hover:bg-slate-700 text-indigo-300 border-2 border-indigo-500/60 shadow-slate-950/60'
-                    : 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 hover:from-indigo-500 hover:to-indigo-400 active:bg-indigo-700 text-white border border-indigo-400/40 shadow-indigo-600/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5'
+                    ? 'bg-slate-800 hover:bg-slate-750 text-indigo-300/90 border border-indigo-500/40'
+                    : 'bg-indigo-600/90 hover:bg-indigo-600 active:bg-indigo-700 text-slate-100 border border-indigo-400/20'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-black/25 flex items-center justify-center shrink-0">
-                    <SlidersHorizontal className="w-4 h-4 text-white" />
-                  </div>
-                  <span className="text-sm font-extrabold uppercase tracking-wider">
-                    {showControlForm ? 'Close Control' : 'Control'}
+                <div className="flex items-center gap-2">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-current" />
+                  <span className="uppercase tracking-wider">
+                    {showControlForm ? 'Close Control' : 'Control Panel'}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] px-2.5 py-1 rounded-lg bg-black/25 text-indigo-100 font-medium hidden sm:inline-flex items-center gap-1">
-                    <Lock className="w-3 h-3 text-indigo-300" />
-                    <span>Reset & Analysis</span>
-                  </span>
-                  <div className="w-6 h-6 rounded-md bg-white/20 flex items-center justify-center shrink-0 text-white">
-                    {showControlForm ? (
-                      <ChevronUp className="w-4 h-4" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4" />
-                    )}
-                  </div>
+                <div className="flex items-center">
+                  {showControlForm ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
                 </div>
               </button>
 
-              <p className="text-[11px] text-slate-400 text-center flex items-center justify-center gap-1.5 px-2">
-                <span>Click</span>
-                <strong className="text-indigo-400 font-semibold">Control</strong>
-                <span>to enter PIN, reset bound devices & view full stats.</span>
-              </p>
-
               {/* Control Form with 2 fields: License Key & PIN */}
               {showControlForm && (
-                <div className="p-4 rounded-2xl bg-slate-900/90 border border-indigo-500/40 shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                <div className="p-3.5 rounded-xl bg-slate-900/90 border border-indigo-500/20 shadow-md space-y-2.5 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
                     <div className="flex items-center gap-1.5 text-slate-200">
-                      <Lock className="w-3.5 h-3.5 text-indigo-400" />
-                      <span className="font-bold text-xs tracking-wide">
-                        Security PIN Verification
+                      <Lock className="w-3.5 h-3.5 text-indigo-400/90" />
+                      <span className="font-semibold text-xs tracking-wide">
+                        License Control
                       </span>
                     </div>
-                    <span className="text-[10px] text-indigo-400/90 font-medium">4-Digit Security Access</span>
                   </div>
 
                   {controlError && (
-                    <div className="p-2.5 rounded-lg bg-rose-950/30 border border-rose-900/50 flex items-center gap-2 text-rose-300 text-xs">
-                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <div className="p-2 rounded-lg bg-rose-950/30 border border-rose-900/50 flex items-center gap-2 text-rose-300 text-[11px]">
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-400/90 shrink-0" />
                       <span>{controlError}</span>
                     </div>
                   )}
 
-                  <form onSubmit={handleOpenControl} className="space-y-3">
+                  <form onSubmit={handleOpenControl} className="space-y-2.5">
                     {/* Field 1: License Key */}
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <label className="text-[11px] text-slate-400 font-medium">
+                        <label className="text-[10px] text-slate-400 font-medium uppercase">
                           License Key
                         </label>
                         {checkKey && controlKey !== checkKey && (
                           <button
                             type="button"
                             onClick={() => setControlKey(checkKey.trim().toUpperCase())}
-                            className="text-[10px] text-indigo-400 hover:text-indigo-300 underline"
+                            className="text-[10px] text-indigo-400/90 hover:text-indigo-300 underline"
                           >
                             Use checked key
                           </button>
@@ -663,18 +922,15 @@ export const LandingPage: React.FC = () => {
                         onChange={(e) => setControlKey(e.target.value.toUpperCase())}
                         placeholder="VCON-XXXX-XXXX-XXXX"
                         required
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 placeholder-slate-600 focus:border-indigo-500 focus:outline-none text-xs tracking-wider font-mono"
+                        className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-500 focus:border-indigo-500/60 focus:outline-none text-xs tracking-wider font-mono"
                       />
                     </div>
 
                     {/* Field 2: 4-digit PIN */}
                     <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-[11px] text-slate-400 font-medium">
-                          4-Digit Security PIN
-                        </label>
-                        <span className="text-[10px] text-slate-500">From creation receipt</span>
-                      </div>
+                      <label className="text-[10px] text-slate-400 font-medium uppercase block mb-1">
+                        Security PIN
+                      </label>
                       <div className="relative">
                         <input
                           type={showPin ? 'text' : 'password'}
@@ -683,7 +939,7 @@ export const LandingPage: React.FC = () => {
                           onChange={(e) => setControlPin(e.target.value.replace(/\D/g, ''))}
                           placeholder="••••"
                           required
-                          className="w-full px-3 py-2.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 placeholder-slate-600 focus:border-indigo-500 focus:outline-none text-xs tracking-widest text-center text-sm font-bold font-mono"
+                          className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-500 focus:border-indigo-500/60 focus:outline-none text-xs tracking-widest text-center font-semibold font-mono"
                         />
                         <button
                           type="button"
@@ -692,7 +948,7 @@ export const LandingPage: React.FC = () => {
                           tabIndex={-1}
                           title={showPin ? 'Hide PIN' : 'Show PIN'}
                         >
-                          {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          {showPin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
                       </div>
                     </div>
@@ -701,14 +957,14 @@ export const LandingPage: React.FC = () => {
                     <button
                       type="submit"
                       disabled={openingControl || !controlKey.trim() || controlPin.length !== 4}
-                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 active:scale-[0.99] text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-950/40 disabled:opacity-50 cursor-pointer border border-indigo-400/30"
+                      className="w-full py-2 px-3 rounded-lg bg-indigo-600/90 hover:bg-indigo-600 active:bg-indigo-700 text-slate-100 font-semibold text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer border border-indigo-400/20"
                     >
                       {openingControl ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <Loader2 className="w-3 h-3 animate-spin" />
                       ) : (
-                        <ArrowRight className="w-3.5 h-3.5" />
+                        <ArrowRight className="w-3 h-3" />
                       )}
-                      <span>Open</span>
+                      <span>Open Control</span>
                     </button>
                   </form>
                 </div>

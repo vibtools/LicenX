@@ -58,9 +58,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   return (
     <div className="space-y-4">
       {/* Top Action Bar */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between font-sans">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-medium text-slate-300 uppercase tracking-wider">
+          <span className="text-xs font-semibold text-slate-300 tracking-normal">
             System Metrics
           </span>
           <button
@@ -75,14 +75,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={onOpenBulk}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-750 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-750 transition-colors"
           >
             <Layers className="w-3.5 h-3.5 text-slate-400" />
             Bulk Engine
           </button>
           <button
             onClick={onOpenCreate}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono font-medium rounded bg-indigo-600/90 hover:bg-indigo-600 text-slate-100 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded bg-indigo-600/90 hover:bg-indigo-600 text-slate-100 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             Issue Key
@@ -91,13 +91,13 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       </div>
 
       {/* Metric Cards Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 font-sans">
         <div
           onClick={() => onNavigateTab('apps')}
           className="p-3 rounded bg-slate-900/40 border border-slate-800/80 hover:border-slate-700/80 cursor-pointer transition-colors"
         >
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-mono uppercase">Apps</span>
+            <span className="text-[10px] font-medium uppercase tracking-wider">Apps</span>
             <AppWindow className="w-3.5 h-3.5 text-slate-500" />
           </div>
           <div className="text-lg font-semibold font-mono text-slate-200 mt-1">
@@ -110,7 +110,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           className="p-3 rounded bg-slate-900/40 border border-slate-800/80 hover:border-slate-700/80 cursor-pointer transition-colors"
         >
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-mono uppercase">Total Keys</span>
+            <span className="text-[10px] font-medium uppercase tracking-wider">Total Keys</span>
             <Key className="w-3.5 h-3.5 text-slate-500" />
           </div>
           <div className="text-lg font-semibold font-mono text-slate-200 mt-1">
@@ -120,7 +120,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
         <div className="p-3 rounded bg-slate-900/40 border border-slate-800/80">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-mono uppercase">Active</span>
+            <span className="text-[10px] font-medium uppercase tracking-wider">Active</span>
             <CheckCircle className="w-3.5 h-3.5 text-emerald-400/80" />
           </div>
           <div className="text-lg font-semibold font-mono text-emerald-400/90 mt-1">
@@ -130,7 +130,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
         <div className="p-3 rounded bg-slate-900/40 border border-slate-800/80">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-mono uppercase">Expired</span>
+            <span className="text-[10px] font-medium uppercase tracking-wider">Expired</span>
             <Clock className="w-3.5 h-3.5 text-amber-400/80" />
           </div>
           <div className="text-lg font-semibold font-mono text-amber-400/90 mt-1">
@@ -140,7 +140,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
         <div className="p-3 rounded bg-slate-900/40 border border-slate-800/80">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-mono uppercase">Revoked</span>
+            <span className="text-[10px] font-medium uppercase tracking-wider">Revoked</span>
             <Ban className="w-3.5 h-3.5 text-rose-400/80" />
           </div>
           <div className="text-lg font-semibold font-mono text-rose-400/90 mt-1">
@@ -153,7 +153,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           className="p-3 rounded bg-slate-900/40 border border-slate-800/80 hover:border-slate-700/80 cursor-pointer transition-colors"
         >
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-mono uppercase">Active HWIDs</span>
+            <span className="text-[10px] font-medium uppercase tracking-wider">Active HWIDs</span>
             <Laptop className="w-3.5 h-3.5 text-indigo-400/80" />
           </div>
           <div className="text-lg font-semibold font-mono text-indigo-300 mt-1">
@@ -166,7 +166,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           className="p-3 rounded bg-slate-900/40 border border-slate-800/80 hover:border-slate-700/80 cursor-pointer transition-colors"
         >
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-mono uppercase">24h Requests</span>
+            <span className="text-[10px] font-medium uppercase tracking-wider">24h Requests</span>
             <Activity className="w-3.5 h-3.5 text-cyan-400/80" />
           </div>
           <div className="text-lg font-semibold font-mono text-cyan-300 mt-1">
@@ -178,13 +178,13 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       {/* Live Activity & Stream */}
       <div className="p-3 rounded bg-slate-900/40 border border-slate-800/80">
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80 mb-2">
-          <div className="flex items-center gap-1.5 text-slate-300 text-xs font-mono font-medium uppercase">
+          <div className="flex items-center gap-1.5 text-slate-300 text-xs font-semibold">
             <Terminal className="w-3.5 h-3.5 text-indigo-400/90" />
             Live Client Validation Stream
           </div>
           <button
             onClick={() => onNavigateTab('logs')}
-            className="text-[11px] font-mono text-indigo-400/90 hover:text-indigo-300 transition-colors"
+            className="text-[11px] font-medium text-indigo-400/90 hover:text-indigo-300 transition-colors font-sans"
           >
             View All Logs →
           </button>
