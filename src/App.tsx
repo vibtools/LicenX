@@ -225,10 +225,18 @@ export default function App() {
           onLoginSuccess={async (user) => {
             setUsername(user);
             setAuthenticated(true);
-            const me = await api.getMe();
-            setPublicKeyPem(me.publicKeyPem);
-            const st = await api.getStats();
-            setStats(st);
+            try {
+              const me = await api.getMe();
+              if (me?.publicKeyPem) setPublicKeyPem(me.publicKeyPem);
+            } catch (err) {
+              console.warn('Could not load profile details immediately:', err);
+            }
+            try {
+              const st = await api.getStats();
+              if (st) setStats(st);
+            } catch (err) {
+              console.warn('Could not load stats immediately:', err);
+            }
           }}
         />
       </div>

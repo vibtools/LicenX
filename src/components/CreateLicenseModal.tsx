@@ -40,9 +40,11 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
 
   useEffect(() => {
     api.getApps().then((res) => {
-      setApps(res.apps);
-      if (res.apps.length > 0) {
-        setSelectedAppId(res.apps[0].id);
+      const appList = res?.apps || (Array.isArray(res) ? (res as any) : []);
+      const validApps = Array.isArray(appList) ? appList : [];
+      setApps(validApps);
+      if (validApps.length > 0) {
+        setSelectedAppId(validApps[0].id);
       }
     }).catch(() => {});
   }, []);

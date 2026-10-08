@@ -53,18 +53,21 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     try {
       setLoading(true);
       const [sRes, bRes] = await Promise.all([api.getSettings(), api.getR2Backups()]);
-      setTursoUrl(sRes.tursoUrl);
-      setHasTursoEnv(sRes.hasTursoEnv);
-      if (sRes.r2Config) {
-        setR2Config({
-          accountId: sRes.r2Config.accountId || '',
-          accessKeyId: sRes.r2Config.accessKeyId || '',
-          secretAccessKey: sRes.r2Config.secretAccessKey || '',
-          bucketName: sRes.r2Config.bucketName || '',
-          publicUrl: sRes.r2Config.publicUrl || '',
-        });
+      if (sRes) {
+        setTursoUrl(sRes.tursoUrl || '');
+        setHasTursoEnv(Boolean(sRes.hasTursoEnv));
+        if (sRes.r2Config) {
+          setR2Config({
+            accountId: sRes.r2Config.accountId || '',
+            accessKeyId: sRes.r2Config.accessKeyId || '',
+            secretAccessKey: sRes.r2Config.secretAccessKey || '',
+            bucketName: sRes.r2Config.bucketName || '',
+            publicUrl: sRes.r2Config.publicUrl || '',
+          });
+        }
       }
-      setBackups(bRes.backups);
+      const backupList = bRes?.backups || (Array.isArray(bRes) ? (bRes as any) : []);
+      setBackups(Array.isArray(backupList) ? backupList : []);
     } catch {
       // ignore
     } finally {

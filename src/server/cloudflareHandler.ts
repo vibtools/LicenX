@@ -309,15 +309,56 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized) return errorResponse(auth.error || 'Unauthorized', 401);
 
-      const appsResult = await db.execute(`
-        SELECT a.*, COUNT(l.id) as licenses_count
-        FROM apps a
-        LEFT JOIN licenses l ON a.id = l.app_id
-        GROUP BY a.id
-        ORDER BY a.created_at DESC
-      `);
+      const search = url.searchParams.get('search');
+      const status = url.searchParams.get('status');
+      const limit = Number(url.searchParams.get('limit') || '50');
+      const offset = Number(url.searchParams.get('offset') || '0');
 
-      return jsonResponse(appsResult.rows);
+      let query = `
+        SELECT a.*,
+          (SELECT COUNT(*) FROM licenses l WHERE l.app_id = a.id) as licenses_count
+        FROM apps a
+        WHERE 1=1
+      `;
+      const args: any[] = [];
+
+      if (search && search.trim()) {
+        query += ` AND (a.app_slug LIKE ? OR a.display_name LIKE ? OR a.description LIKE ?)`;
+        const term = `%${search.trim()}%`;
+        args.push(term, term, term);
+      }
+
+      if (status && status !== 'all') {
+        query += ` AND a.status = ?`;
+        args.push(status);
+      }
+
+      query += ` ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
+      args.push(limit, offset);
+
+      const result = await db.execute({ sql: query, args });
+
+      let countQuery = `SELECT COUNT(*) as total FROM apps a WHERE 1=1`;
+      const countArgs: any[] = [];
+      if (search && search.trim()) {
+        countQuery += ` AND (a.app_slug LIKE ? OR a.display_name LIKE ? OR a.description LIKE ?)`;
+        const term = `%${search.trim()}%`;
+        countArgs.push(term, term, term);
+      }
+      if (status && status !== 'all') {
+        countQuery += ` AND a.status = ?`;
+        countArgs.push(status);
+      }
+
+      const countRes = await db.execute({ sql: countQuery, args: countArgs });
+      const total = Number(countRes.rows[0]?.total || 0);
+
+      return jsonResponse({
+        apps: result.rows,
+        total,
+        limit,
+        offset,
+      });
     }
 
     if (normalizedPath === '/apps' && method === 'POST') {
@@ -1446,14 +1487,14 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       ]);
 
       return jsonResponse({
-        totalApps: Number(appsRes.rows[0].c || 0),
-        totalLicenses: Number(totalRes.rows[0].c || 0),
-        activeLicenses: Number(activeRes.rows[0].c || 0),
-        expiredLicenses: Number(expiredRes.rows[0].c || 0),
-        revokedLicenses: Number(revokedRes.rows[0].c || 0),
-        suspendedLicenses: Number(suspendedRes.rows[0].c || 0),
-        activeDevices: Number(devicesRes.rows[0].c || 0),
-        validations24h: Number(logs24hRes.rows[0].c || 0),
+        totalApps: Number(appsRes.rows[0]?.c || 0),
+        totalLicenses: Number(totalRes.rows[0]?.c || 0),
+        activeLicenses: Number(activeRes.rows[0]?.c || 0),
+        expiredLicenses: Number(expiredRes.rows[0]?.c || 0),
+        revokedLicenses: Number(revokedRes.rows[0]?.c || 0),
+        suspendedLicenses: Number(suspendedRes.rows[0]?.c || 0),
+        activeDevices: Number(devicesRes.rows[0]?.c || 0),
+        validations24h: Number(logs24hRes.rows[0]?.c || 0),
         uptime: 99.99,
         serverTime: Date.now(),
       });
@@ -1463,8 +1504,21 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized) return errorResponse(auth.error || 'Unauthorized', 401);
 
-      const logs = await db.execute('SELECT * FROM validation_logs ORDER BY created_at DESC LIMIT 200');
-      return jsonResponse(logs.rows);
+      const limit = Number(url.searchParams.get('limit') || '100');
+      const offset = Number(url.searchParams.get('offset') || '0');
+      const action = url.searchParams.get('action');
+
+      let query = 'SELECT * FROM validation_logs WHERE 1=1';
+      const args: any[] = [];
+      if (action && action !== 'all') {
+        query += ' AND action = ?';
+        args.push(action);
+      }
+      query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+      args.push(limit, offset);
+
+      const result = await db.execute({ sql: query, args });
+      return jsonResponse({ logs: result.rows });
     }
 
     if (normalizedPath === '/logs' && method === 'DELETE') {

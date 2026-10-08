@@ -81,9 +81,11 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
         }),
         api.getApps(),
       ]);
-      setLicenses(licRes.licenses);
-      setTotal(licRes.total);
-      setApps(appRes.apps);
+      const licList = licRes?.licenses || (Array.isArray(licRes) ? (licRes as any) : []);
+      const appList = appRes?.apps || (Array.isArray(appRes) ? (appRes as any) : []);
+      setLicenses(Array.isArray(licList) ? licList : []);
+      setTotal(typeof licRes?.total === 'number' ? licRes.total : (Array.isArray(licList) ? licList.length : 0));
+      setApps(Array.isArray(appList) ? appList : []);
     } catch {
       // ignore
     } finally {

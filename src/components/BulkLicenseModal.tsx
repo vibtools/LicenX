@@ -34,7 +34,8 @@ export const BulkLicenseModal: React.FC<BulkLicenseModalProps> = ({
 
   useEffect(() => {
     api.getApps().then((res) => {
-      setApps(res.apps);
+      const appList = res?.apps || (Array.isArray(res) ? (res as any) : []);
+      setApps(Array.isArray(appList) ? appList : []);
     }).catch(() => {});
   }, []);
 

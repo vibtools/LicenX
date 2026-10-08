@@ -15,7 +15,8 @@ export const LogsTab: React.FC = () => {
         action: actionFilter !== 'all' ? actionFilter : undefined,
         limit: 150,
       });
-      setLogs(res.logs);
+      const logList = res?.logs || (Array.isArray(res) ? (res as any) : []);
+      setLogs(Array.isArray(logList) ? logList : []);
     } catch {
       // ignore
     } finally {
@@ -52,7 +53,7 @@ export const LogsTab: React.FC = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-medium text-slate-300 uppercase tracking-wider">
-            Audit Log Trail ({logs.length})
+            Audit Log Trail ({(logs || []).length})
           </span>
           <select
             value={actionFilter}

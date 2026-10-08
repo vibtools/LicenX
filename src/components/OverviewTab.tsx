@@ -34,8 +34,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     try {
       setLoading(true);
       const [sRes, lRes] = await Promise.all([api.getStats(), api.getLogs({ limit: 8 })]);
-      setStats(sRes);
-      setLogs(lRes.logs);
+      if (sRes) setStats(sRes);
+      const logList = lRes?.logs || (Array.isArray(lRes) ? (lRes as any) : []);
+      setLogs(Array.isArray(logList) ? logList : []);
     } catch {
       // ignore
     } finally {
@@ -190,13 +191,13 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </button>
         </div>
 
-        {logs.length === 0 ? (
+        {(logs || []).length === 0 ? (
           <div className="py-6 text-center text-slate-500 font-mono text-xs">
             No validation requests recorded yet.
           </div>
         ) : (
           <div className="space-y-1 font-mono text-xs">
-            {logs.map((log) => (
+            {(logs || []).map((log) => (
               <div
                 key={log.id}
                 className="flex items-center justify-between py-1.5 px-2 rounded bg-slate-950/60 border border-slate-900 text-[11px] hover:border-slate-800/80 transition-colors"

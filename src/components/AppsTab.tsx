@@ -47,8 +47,9 @@ export const AppsTab: React.FC = () => {
         status: statusFilter !== 'all' ? statusFilter : undefined,
         limit: 100,
       });
-      setApps(res.apps);
-      setTotal(res.total);
+      const appList = res?.apps || (Array.isArray(res) ? (res as any) : []);
+      setApps(Array.isArray(appList) ? appList : []);
+      setTotal(typeof res?.total === 'number' ? res.total : (Array.isArray(appList) ? appList.length : 0));
     } catch {
       // ignore
     } finally {

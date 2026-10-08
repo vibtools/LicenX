@@ -23,7 +23,8 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
     try {
       setLoading(true);
       const res = await api.getLicenseDevices(license.id);
-      setDevices(res.devices);
+      const devList = res?.devices || (Array.isArray(res) ? (res as any) : []);
+      setDevices(Array.isArray(devList) ? devList : []);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch devices');
     } finally {

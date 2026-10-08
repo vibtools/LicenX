@@ -16,10 +16,12 @@ export const SimulatorTab: React.FC = () => {
 
   useEffect(() => {
     api.getApps().then((res) => {
-      setApps(res.apps);
-      if (res.apps.length > 0) {
-        setSelectedAppName(res.apps[0].app_slug);
-        setAppVersion(res.apps[0].min_version || '1.0.0');
+      const appList = res?.apps || (Array.isArray(res) ? (res as any) : []);
+      const validApps = Array.isArray(appList) ? appList : [];
+      setApps(validApps);
+      if (validApps.length > 0) {
+        setSelectedAppName(validApps[0].app_slug);
+        setAppVersion(validApps[0].min_version || '1.0.0');
       }
     }).catch(() => {});
   }, []);

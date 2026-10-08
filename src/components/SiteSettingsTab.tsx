@@ -51,8 +51,10 @@ export const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({
       setLoading(true);
       setErrorMessage(null);
       const res = await api.getSiteSettings();
-      setSettings(res.siteSettings);
-      setR2Configured(res.r2Configured);
+      if (res?.siteSettings) {
+        setSettings({ ...DEFAULT_SITE_SETTINGS, ...res.siteSettings });
+      }
+      setR2Configured(Boolean(res?.r2Configured));
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to load site settings');
     } finally {

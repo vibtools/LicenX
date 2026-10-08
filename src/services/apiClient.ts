@@ -62,23 +62,36 @@ export const api = {
 
   // Stats & Logs
   getStats: () => request<SystemStats>('/api/stats'),
-  getLogs: (params: { limit?: number; offset?: number; action?: string } = {}) => {
+  getLogs: async (params: { limit?: number; offset?: number; action?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.limit) q.set('limit', params.limit.toString());
     if (params.offset) q.set('offset', params.offset.toString());
     if (params.action) q.set('action', params.action);
-    return request<{ logs: ValidationLog[] }>(`/api/logs?${q.toString()}`);
+    const data = await request<any>(`/api/logs?${q.toString()}`);
+    if (Array.isArray(data)) {
+      return { logs: data };
+    }
+    return { logs: Array.isArray(data?.logs) ? data.logs : [] };
   },
   clearLogs: () => request<{ success: boolean }>('/api/logs', { method: 'DELETE' }),
 
   // Apps Management
-  getApps: (params: { search?: string; status?: string; limit?: number; offset?: number } = {}) => {
+  getApps: async (params: { search?: string; status?: string; limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.search) q.set('search', params.search);
     if (params.status) q.set('status', params.status);
     if (params.limit) q.set('limit', params.limit.toString());
     if (params.offset) q.set('offset', params.offset.toString());
-    return request<{ apps: AppItem[]; total: number; limit: number; offset: number }>(`/api/apps?${q.toString()}`);
+    const data = await request<any>(`/api/apps?${q.toString()}`);
+    if (Array.isArray(data)) {
+      return { apps: data, total: data.length, limit: params.limit || 50, offset: params.offset || 0 };
+    }
+    return {
+      apps: Array.isArray(data?.apps) ? data.apps : [],
+      total: typeof data?.total === 'number' ? data.total : (data?.apps?.length || 0),
+      limit: data?.limit || params.limit || 50,
+      offset: data?.offset || params.offset || 0,
+    };
   },
   createApp: (data: { app_slug: string; display_name: string; min_version?: string; description?: string }) =>
     request<{ success: boolean; app: AppItem }>('/api/apps', {
@@ -114,7 +127,7 @@ export const api = {
   },
 
   // Licenses
-  getLicenses: (params: { search?: string; status?: string; tier?: string; app_id?: string; limit?: number; offset?: number } = {}) => {
+  getLicenses: async (params: { search?: string; status?: string; tier?: string; app_id?: string; limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.search) q.set('search', params.search);
     if (params.status) q.set('status', params.status);
@@ -122,7 +135,16 @@ export const api = {
     if (params.app_id) q.set('app_id', params.app_id);
     if (params.limit) q.set('limit', params.limit.toString());
     if (params.offset) q.set('offset', params.offset.toString());
-    return request<{ licenses: License[]; total: number; limit: number; offset: number }>(`/api/licenses?${q.toString()}`);
+    const data = await request<any>(`/api/licenses?${q.toString()}`);
+    if (Array.isArray(data)) {
+      return { licenses: data, total: data.length, limit: params.limit || 50, offset: params.offset || 0 };
+    }
+    return {
+      licenses: Array.isArray(data?.licenses) ? data.licenses : [],
+      total: typeof data?.total === 'number' ? data.total : (data?.licenses?.length || 0),
+      limit: data?.limit || params.limit || 50,
+      offset: data?.offset || params.offset || 0,
+    };
   },
   createLicense: (data: Partial<License> & { prefix?: string }) =>
     request<{ success: boolean; license: License }>('/api/licenses', {
@@ -155,18 +177,30 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  getLicenseDevices: (licenseId: string) =>
-    request<{ devices: Device[] }>(`/api/licenses/${licenseId}/devices`),
+  getLicenseDevices: async (licenseId: string) => {
+    const data = await request<any>(`/api/licenses/${licenseId}/devices`);
+    if (Array.isArray(data)) {
+      return { devices: data };
+    }
+    return { devices: Array.isArray(data?.devices) ? data.devices : [] };
+  },
   resetLicenseDevices: (licenseId: string) =>
     request<{ success: boolean }>(`/api/licenses/${licenseId}/devices`, { method: 'DELETE' }),
 
   // Global Devices
-  getDevices: (params: { search?: string; limit?: number; offset?: number } = {}) => {
+  getDevices: async (params: { search?: string; limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.search) q.set('search', params.search);
     if (params.limit) q.set('limit', params.limit.toString());
     if (params.offset) q.set('offset', params.offset.toString());
-    return request<{ devices: Device[]; total: number }>(`/api/devices?${q.toString()}`);
+    const data = await request<any>(`/api/devices?${q.toString()}`);
+    if (Array.isArray(data)) {
+      return { devices: data, total: data.length };
+    }
+    return {
+      devices: Array.isArray(data?.devices) ? data.devices : [],
+      total: typeof data?.total === 'number' ? data.total : (data?.devices?.length || 0),
+    };
   },
   unbindDevice: (deviceId: string) =>
     request<{ success: boolean }>(`/api/devices/${deviceId}`, { method: 'DELETE' }),

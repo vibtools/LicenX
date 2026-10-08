@@ -14,8 +14,9 @@ export const DevicesTab: React.FC = () => {
     try {
       setLoading(true);
       const res = await api.getDevices({ search: search.trim() || undefined, limit: 100 });
-      setDevices(res.devices);
-      setTotal(res.total);
+      const devList = res?.devices || (Array.isArray(res) ? (res as any) : []);
+      setDevices(Array.isArray(devList) ? devList : []);
+      setTotal(typeof res?.total === 'number' ? res.total : (Array.isArray(devList) ? devList.length : 0));
     } catch {
       // ignore
     } finally {
