@@ -34,7 +34,15 @@ function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ error: message }, status);
 }
 
-// Admin Bearer Authentication
+// In-memory admin auth caching to prevent redundant DB roundtrips on every request
+let cachedAdminConfig: { jwtSecret: string; username: string; cachedAt: number } | null = null;
+const ADMIN_CONFIG_CACHE_TTL = 60 * 1000; // 60 seconds cache
+
+export function invalidateAdminConfigCache(): void {
+  cachedAdminConfig = null;
+}
+
+// Admin Bearer Authentication (High Performance Cached)
 async function verifyAdminAuth(request: Request, env: any): Promise<{ authorized: boolean; username?: string; error?: string }> {
   try {
     const authHeader = request.headers.get('authorization') || request.headers.get('Authorization');
@@ -43,15 +51,27 @@ async function verifyAdminAuth(request: Request, env: any): Promise<{ authorized
     }
 
     const token = authHeader.split(' ')[1];
-    const db = getDbClient(env);
-    const configResult = await db.execute('SELECT jwt_secret, username FROM admin_config LIMIT 1');
+    const now = Date.now();
+    let jwtSecret = '';
+    let username = '';
 
-    if (configResult.rows.length === 0) {
-      return { authorized: false, error: 'System not initialized' };
+    if (cachedAdminConfig && (now - cachedAdminConfig.cachedAt < ADMIN_CONFIG_CACHE_TTL)) {
+      jwtSecret = cachedAdminConfig.jwtSecret;
+      username = cachedAdminConfig.username;
+    } else {
+      const db = getDbClient(env);
+      const configResult = await db.execute('SELECT jwt_secret, username FROM admin_config LIMIT 1');
+
+      if (configResult.rows.length === 0) {
+        return { authorized: false, error: 'System not initialized' };
+      }
+
+      const configRow = configResult.rows[0];
+      jwtSecret = configRow.jwt_secret as string;
+      username = configRow.username as string;
+      cachedAdminConfig = { jwtSecret, username, cachedAt: now };
     }
 
-    const configRow = configResult.rows[0];
-    const jwtSecret = configRow.jwt_secret as string;
     const session = verifySessionToken(token, jwtSecret);
 
     if (!session) {
@@ -205,6 +225,8 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         args: [id, username.trim(), passwordHash, jwtSecret, keypair.privateKeyPem, keypair.publicKeyPem, r2Json, now, now],
       });
 
+      invalidateAdminConfigCache();
+
       const token = createSessionToken(
         { username: username.trim(), exp: Math.floor(Date.now() / 1000) + 86400 * 30 },
         jwtSecret
@@ -290,6 +312,8 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         args: [targetUsername, targetPasswordHash, newJwtSecret, Date.now(), row.id as string],
       });
 
+      invalidateAdminConfigCache();
+
       const token = createSessionToken(
         { username: targetUsername, exp: Math.floor(Date.now() / 1000) + 86400 * 30 },
         newJwtSecret
@@ -336,8 +360,6 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       query += ` ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
       args.push(limit, offset);
 
-      const result = await db.execute({ sql: query, args });
-
       let countQuery = `SELECT COUNT(*) as total FROM apps a WHERE 1=1`;
       const countArgs: any[] = [];
       if (search && search.trim()) {
@@ -350,7 +372,10 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         countArgs.push(status);
       }
 
-      const countRes = await db.execute({ sql: countQuery, args: countArgs });
+      const [result, countRes] = await Promise.all([
+        db.execute({ sql: query, args }),
+        db.execute({ sql: countQuery, args: countArgs }),
+      ]);
       const total = Number(countRes.rows[0]?.total || 0);
 
       return jsonResponse({
@@ -570,8 +595,6 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       sql += ' ORDER BY l.created_at DESC LIMIT ? OFFSET ?';
       args.push(limit, offset);
 
-      const result = await db.execute({ sql, args });
-
       // Count total
       let countSql = `SELECT COUNT(*) as total FROM licenses l WHERE 1=1`;
       const countArgs: any[] = [];
@@ -597,8 +620,11 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         countArgs.push(query, query, query, query);
       }
 
-      const countRes = await db.execute({ sql: countSql, args: countArgs });
-      const total = Number(countRes.rows[0].total || 0);
+      const [result, countRes] = await Promise.all([
+        db.execute({ sql, args }),
+        db.execute({ sql: countSql, args: countArgs }),
+      ]);
+      const total = Number(countRes.rows[0]?.total || 0);
 
       return jsonResponse({
         licenses: result.rows,
@@ -949,8 +975,6 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       query += ` ORDER BY d.last_ping_at DESC LIMIT ? OFFSET ?`;
       args.push(limit, offset);
 
-      const result = await db.execute({ sql: query, args });
-
       let countSql = `
         SELECT COUNT(*) as total
         FROM devices d
@@ -963,7 +987,11 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         const term = `%${search.trim()}%`;
         countArgs.push(term, term, term, term);
       }
-      const countRes = await db.execute({ sql: countSql, args: countArgs });
+
+      const [result, countRes] = await Promise.all([
+        db.execute({ sql: query, args }),
+        db.execute({ sql: countSql, args: countArgs }),
+      ]);
 
       return jsonResponse({
         devices: result.rows,
@@ -1475,26 +1503,31 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized) return errorResponse(auth.error || 'Unauthorized', 401);
 
-      const [appsRes, totalRes, activeRes, expiredRes, revokedRes, suspendedRes, devicesRes, logs24hRes] = await Promise.all([
-        db.execute('SELECT COUNT(*) as c FROM apps'),
-        db.execute('SELECT COUNT(*) as c FROM licenses'),
-        db.execute("SELECT COUNT(*) as c FROM licenses WHERE status = 'active'"),
-        db.execute("SELECT COUNT(*) as c FROM licenses WHERE status = 'expired'"),
-        db.execute("SELECT COUNT(*) as c FROM licenses WHERE status = 'revoked'"),
-        db.execute("SELECT COUNT(*) as c FROM licenses WHERE status = 'suspended'"),
-        db.execute("SELECT COUNT(*) as c FROM devices WHERE status = 'active'"),
-        db.execute(`SELECT COUNT(*) as c FROM validation_logs WHERE created_at >= ${Date.now() - 86400 * 1000}`),
-      ]);
+      const oneDayAgo = Date.now() - 86400 * 1000;
+      const statsRes = await db.execute({
+        sql: `SELECT
+          (SELECT COUNT(*) FROM apps) as total_apps,
+          (SELECT COUNT(*) FROM licenses) as total_licenses,
+          (SELECT COUNT(*) FROM licenses WHERE status = 'active') as active_licenses,
+          (SELECT COUNT(*) FROM licenses WHERE status = 'expired') as expired_licenses,
+          (SELECT COUNT(*) FROM licenses WHERE status = 'revoked') as revoked_licenses,
+          (SELECT COUNT(*) FROM licenses WHERE status = 'suspended') as suspended_licenses,
+          (SELECT COUNT(*) FROM devices WHERE status = 'active') as active_devices,
+          (SELECT COUNT(*) FROM validation_logs WHERE created_at >= ?) as validations_24h`,
+        args: [oneDayAgo],
+      });
+
+      const sRow = (statsRes.rows[0] as any) || {};
 
       return jsonResponse({
-        totalApps: Number(appsRes.rows[0]?.c || 0),
-        totalLicenses: Number(totalRes.rows[0]?.c || 0),
-        activeLicenses: Number(activeRes.rows[0]?.c || 0),
-        expiredLicenses: Number(expiredRes.rows[0]?.c || 0),
-        revokedLicenses: Number(revokedRes.rows[0]?.c || 0),
-        suspendedLicenses: Number(suspendedRes.rows[0]?.c || 0),
-        activeDevices: Number(devicesRes.rows[0]?.c || 0),
-        validations24h: Number(logs24hRes.rows[0]?.c || 0),
+        totalApps: Number(sRow.total_apps || 0),
+        totalLicenses: Number(sRow.total_licenses || 0),
+        activeLicenses: Number(sRow.active_licenses || 0),
+        expiredLicenses: Number(sRow.expired_licenses || 0),
+        revokedLicenses: Number(sRow.revoked_licenses || 0),
+        suspendedLicenses: Number(sRow.suspended_licenses || 0),
+        activeDevices: Number(sRow.active_devices || 0),
+        validations24h: Number(sRow.validations_24h || 0),
         uptime: 99.99,
         serverTime: Date.now(),
       });
@@ -1650,7 +1683,9 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         } catch {}
       }
 
-      return jsonResponse(siteSettings);
+      return jsonResponse(siteSettings, 200, {
+        'Cache-Control': 'public, max-age=60, s-maxage=300, stale-while-revalidate=600',
+      });
     }
 
     if (normalizedPath === '/settings/site' && method === 'GET') {

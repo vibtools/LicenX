@@ -7,6 +7,9 @@ let dbClient: Client | null = null;
 let currentDbUrl = '';
 let currentAuthToken = '';
 
+let isSchemaInitialized = false;
+let schemaInitPromise: Promise<void> | null = null;
+
 export function isTursoPlaceholder(url?: string, token?: string): boolean {
   if (!url) return true;
   const cleanUrl = url.trim().toLowerCase();
@@ -77,34 +80,47 @@ export function getDbClient(env?: any): Client {
 }
 
 export async function initDatabaseSchema(env?: any): Promise<void> {
-  let db = getDbClient(env);
+  if (isSchemaInitialized) return;
+  if (schemaInitPromise) return schemaInitPromise;
 
-  try {
-    // Quick test query to ensure connection is responsive
-    await db.execute('SELECT 1');
-  } catch (probeError) {
-    console.warn('[VCON] Database connection probe failed, falling back to local SQLite file:vcon_data.db:', probeError);
-    currentDbUrl = 'file:vcon_data.db';
-    currentAuthToken = '';
-    dbClient = createClient({ url: 'file:vcon_data.db' });
-    db = dbClient;
-  }
+  schemaInitPromise = (async () => {
+    let db = getDbClient(env);
 
-  // 1. Admin config table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS admin_config (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      jwt_secret TEXT NOT NULL,
-      ed25519_private_key TEXT NOT NULL,
-      ed25519_public_key TEXT NOT NULL,
-      r2_config_json TEXT,
-      site_settings_json TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-  `);
+    try {
+      // Fast probe: check if all 5 core tables exist
+      const check = await db.execute(
+        "SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name IN ('admin_config', 'apps', 'licenses', 'devices', 'validation_logs')"
+      );
+      const count = Number(check.rows[0]?.c || 0);
+      if (count >= 5) {
+        // Fast path: Database schema already exists!
+        // Ensure high-performance indexes exist silently
+        try {
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON licenses(created_at DESC)');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_devices_first_bound ON devices(first_bound_at DESC)');
+        } catch {}
+        isSchemaInitialized = true;
+        return;
+      }
+    } catch (probeError) {
+      console.warn('[VCON] Database connection probe check failed:', probeError);
+    }
+
+    // 1. Admin config table
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS admin_config (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        jwt_secret TEXT NOT NULL,
+        ed25519_private_key TEXT NOT NULL,
+        ed25519_public_key TEXT NOT NULL,
+        r2_config_json TEXT,
+        site_settings_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
 
   try {
     await db.execute('ALTER TABLE admin_config ADD COLUMN site_settings_json TEXT');
@@ -229,6 +245,11 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
   await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_logs_created_at ON validation_logs(created_at DESC);
   `);
+  try {
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_logs_action ON validation_logs(action, created_at DESC);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON licenses(created_at DESC);');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_devices_first_bound ON devices(first_bound_at DESC);');
+  } catch {}
 
   // 6. R2 Backups history
   await db.execute(`
@@ -261,4 +282,11 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
       ],
     });
   }
+
+  isSchemaInitialized = true;
+  })().finally(() => {
+    schemaInitPromise = null;
+  });
+
+  return schemaInitPromise;
 }

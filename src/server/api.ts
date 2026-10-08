@@ -21,7 +21,15 @@ import { testR2Connection, uploadToR2, R2Config } from './r2.js';
 
 export const apiRouter = Router();
 
-// Middleware: Authenticate Admin using Bearer token
+// In-memory admin auth caching to eliminate redundant DB queries on every request
+let cachedAdminConfig: { jwtSecret: string; username: string; cachedAt: number } | null = null;
+const ADMIN_CONFIG_CACHE_TTL = 60 * 1000; // 60 seconds
+
+export function invalidateAdminConfigCache(): void {
+  cachedAdminConfig = null;
+}
+
+// Middleware: Authenticate Admin using Bearer token (High Performance Cached)
 async function requireAdminAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const authHeader = req.headers.authorization;
@@ -31,16 +39,28 @@ async function requireAdminAuth(req: Request, res: Response, next: NextFunction)
     }
 
     const token = authHeader.split(' ')[1];
-    const db = getDbClient();
-    const configResult = await db.execute('SELECT jwt_secret, username FROM admin_config LIMIT 1');
+    const now = Date.now();
+    let jwtSecret = '';
+    let username = '';
 
-    if (configResult.rows.length === 0) {
-      res.status(401).json({ error: 'System not initialized' });
-      return;
+    if (cachedAdminConfig && (now - cachedAdminConfig.cachedAt < ADMIN_CONFIG_CACHE_TTL)) {
+      jwtSecret = cachedAdminConfig.jwtSecret;
+      username = cachedAdminConfig.username;
+    } else {
+      const db = getDbClient();
+      const configResult = await db.execute('SELECT jwt_secret, username FROM admin_config LIMIT 1');
+
+      if (configResult.rows.length === 0) {
+        res.status(401).json({ error: 'System not initialized' });
+        return;
+      }
+
+      const configRow = configResult.rows[0];
+      jwtSecret = configRow.jwt_secret as string;
+      username = configRow.username as string;
+      cachedAdminConfig = { jwtSecret, username, cachedAt: now };
     }
 
-    const configRow = configResult.rows[0];
-    const jwtSecret = configRow.jwt_secret as string;
     const session = verifySessionToken(token, jwtSecret);
 
     if (!session) {
@@ -1617,26 +1637,31 @@ apiRouter.get('/stats', requireAdminAuth, async (req: Request, res: Response) =>
   try {
     const db = getDbClient();
 
-    const [appsRes, totalRes, activeRes, expiredRes, revokedRes, suspendedRes, devicesRes, logs24hRes] = await Promise.all([
-      db.execute('SELECT COUNT(*) as c FROM apps'),
-      db.execute('SELECT COUNT(*) as c FROM licenses'),
-      db.execute("SELECT COUNT(*) as c FROM licenses WHERE status = 'active'"),
-      db.execute("SELECT COUNT(*) as c FROM licenses WHERE status = 'expired'"),
-      db.execute("SELECT COUNT(*) as c FROM licenses WHERE status = 'revoked'"),
-      db.execute("SELECT COUNT(*) as c FROM licenses WHERE status = 'suspended'"),
-      db.execute("SELECT COUNT(*) as c FROM devices WHERE status = 'active'"),
-      db.execute(`SELECT COUNT(*) as c FROM validation_logs WHERE created_at >= ${Date.now() - 86400 * 1000}`),
-    ]);
+    const oneDayAgo = Date.now() - 86400 * 1000;
+    const statsRes = await db.execute({
+      sql: `SELECT
+        (SELECT COUNT(*) FROM apps) as total_apps,
+        (SELECT COUNT(*) FROM licenses) as total_licenses,
+        (SELECT COUNT(*) FROM licenses WHERE status = 'active') as active_licenses,
+        (SELECT COUNT(*) FROM licenses WHERE status = 'expired') as expired_licenses,
+        (SELECT COUNT(*) FROM licenses WHERE status = 'revoked') as revoked_licenses,
+        (SELECT COUNT(*) FROM licenses WHERE status = 'suspended') as suspended_licenses,
+        (SELECT COUNT(*) FROM devices WHERE status = 'active') as active_devices,
+        (SELECT COUNT(*) FROM validation_logs WHERE created_at >= ?) as validations_24h`,
+      args: [oneDayAgo],
+    });
+
+    const sRow = (statsRes.rows[0] as any) || {};
 
     res.json({
-      totalApps: Number(appsRes.rows[0].c || 0),
-      totalLicenses: Number(totalRes.rows[0].c || 0),
-      activeLicenses: Number(activeRes.rows[0].c || 0),
-      expiredLicenses: Number(expiredRes.rows[0].c || 0),
-      revokedLicenses: Number(revokedRes.rows[0].c || 0),
-      suspendedLicenses: Number(suspendedRes.rows[0].c || 0),
-      activeDevices: Number(devicesRes.rows[0].c || 0),
-      validations24h: Number(logs24hRes.rows[0].c || 0),
+      totalApps: Number(sRow.total_apps || 0),
+      totalLicenses: Number(sRow.total_licenses || 0),
+      activeLicenses: Number(sRow.active_licenses || 0),
+      expiredLicenses: Number(sRow.expired_licenses || 0),
+      revokedLicenses: Number(sRow.revoked_licenses || 0),
+      suspendedLicenses: Number(sRow.suspended_licenses || 0),
+      activeDevices: Number(sRow.active_devices || 0),
+      validations24h: Number(sRow.validations_24h || 0),
       serverTime: Date.now(),
     });
   } catch (error: any) {

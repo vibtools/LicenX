@@ -126,26 +126,32 @@ export default function App() {
   const checkAuthAndStatus = async () => {
     try {
       setLoading(true);
-      const status = await api.getSetupStatus();
-      setSetupStatus(status);
+      const token = getAuthToken();
 
-      if (status.initialized) {
-        const token = getAuthToken();
-        if (token) {
-          try {
-            const me = await api.getMe();
-            setAuthenticated(true);
-            setUsername(me.username);
-            setPublicKeyPem(me.publicKeyPem);
+      if (token) {
+        // Parallel execution on boot for blazing fast initial load
+        const [statusRes, meRes, statsRes] = await Promise.all([
+          api.getSetupStatus().catch(() => null),
+          api.getMe().catch(() => null),
+          api.getStats().catch(() => null),
+        ]);
 
-            // Fetch initial stats for badges
-            const st = await api.getStats();
-            setStats(st);
-          } catch {
-            clearAuthToken();
-            setAuthenticated(false);
-          }
+        if (statusRes) {
+          setSetupStatus(statusRes);
         }
+
+        if (meRes && meRes.authenticated) {
+          setAuthenticated(true);
+          setUsername(meRes.username);
+          setPublicKeyPem(meRes.publicKeyPem);
+          if (statsRes) setStats(statsRes);
+        } else {
+          clearAuthToken();
+          setAuthenticated(false);
+        }
+      } else {
+        const status = await api.getSetupStatus();
+        setSetupStatus(status);
       }
     } catch (err) {
       console.error('Failed to initialize app', err);
@@ -165,9 +171,10 @@ export default function App() {
   };
 
   const handleRefresh = async () => {
+    api.clearCache();
     setRefreshKey((k) => k + 1);
     try {
-      const st = await api.getStats();
+      const st = await api.getStats(true);
       setStats(st);
     } catch {
       // ignore

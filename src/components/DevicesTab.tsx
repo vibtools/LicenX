@@ -10,10 +10,10 @@ export const DevicesTab: React.FC = () => {
   const [search, setSearch] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
-  const loadDevices = async () => {
+  const loadDevices = async (force = false) => {
     try {
-      setLoading(true);
-      const res = await api.getDevices({ search: search.trim() || undefined, limit: 100 });
+      if (devices.length === 0) setLoading(true);
+      const res = await api.getDevices({ search: search.trim() || undefined, limit: 100 }, force);
       const devList = res?.devices || (Array.isArray(res) ? (res as any) : []);
       setDevices(Array.isArray(devList) ? devList : []);
       setTotal(typeof res?.total === 'number' ? res.total : (Array.isArray(devList) ? devList.length : 0));
@@ -81,7 +81,7 @@ export const DevicesTab: React.FC = () => {
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-mono text-slate-400">Total Bound: {total}</span>
           <button
-            onClick={loadDevices}
+            onClick={() => loadDevices(true)}
             className="p-1 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />

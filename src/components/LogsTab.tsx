@@ -8,13 +8,13 @@ export const LogsTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [actionFilter, setActionFilter] = useState('all');
 
-  const loadLogs = async () => {
+  const loadLogs = async (force = false) => {
     try {
-      setLoading(true);
+      if (logs.length === 0) setLoading(true);
       const res = await api.getLogs({
         action: actionFilter !== 'all' ? actionFilter : undefined,
         limit: 150,
-      });
+      }, force);
       const logList = res?.logs || (Array.isArray(res) ? (res as any) : []);
       setLogs(Array.isArray(logList) ? logList : []);
     } catch {
@@ -68,7 +68,7 @@ export const LogsTab: React.FC = () => {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={loadLogs}
+            onClick={() => loadLogs(true)}
             className="p-1 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />

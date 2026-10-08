@@ -68,9 +68,9 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
     return () => window.removeEventListener('click', handleOutsideClick);
   }, []);
 
-  const loadLicenses = async () => {
+  const loadLicenses = async (force = false) => {
     try {
-      setLoading(true);
+      if (licenses.length === 0) setLoading(true);
       const [licRes, appRes] = await Promise.all([
         api.getLicenses({
           search: search.trim() || undefined,
@@ -78,8 +78,8 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
           tier: tierFilter !== 'all' ? tierFilter : undefined,
           app_id: appFilter !== 'all' ? appFilter : undefined,
           limit: 100,
-        }),
-        api.getApps(),
+        }, force),
+        api.getApps({}, force),
       ]);
       const licList = licRes?.licenses || (Array.isArray(licRes) ? (licRes as any) : []);
       const appList = appRes?.apps || (Array.isArray(appRes) ? (appRes as any) : []);
@@ -340,7 +340,7 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
           </select>
 
           <button
-            onClick={loadLicenses}
+            onClick={() => loadLicenses(true)}
             title="Reload table"
             className="p-1 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
           >

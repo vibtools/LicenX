@@ -28,12 +28,12 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 }) => {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [logs, setLogs] = useState<ValidationLog[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!stats);
 
-  const loadData = async () => {
+  const loadData = async (force = false) => {
     try {
-      setLoading(true);
-      const [sRes, lRes] = await Promise.all([api.getStats(), api.getLogs({ limit: 8 })]);
+      if (!stats) setLoading(true);
+      const [sRes, lRes] = await Promise.all([api.getStats(force), api.getLogs({ limit: 8 }, force)]);
       if (sRes) setStats(sRes);
       const logList = lRes?.logs || (Array.isArray(lRes) ? (lRes as any) : []);
       setLogs(Array.isArray(logList) ? logList : []);
@@ -65,7 +65,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             System Metrics
           </span>
           <button
-            onClick={loadData}
+            onClick={() => loadData(true)}
             title="Refresh data"
             className="p-1 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
           >

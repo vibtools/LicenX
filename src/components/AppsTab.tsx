@@ -39,14 +39,14 @@ export const AppsTab: React.FC = () => {
     }
   };
 
-  const loadApps = async () => {
+  const loadApps = async (force = false) => {
     try {
-      setLoading(true);
+      if (apps.length === 0) setLoading(true);
       const res = await api.getApps({
         search: search.trim() || undefined,
         status: statusFilter !== 'all' ? statusFilter : undefined,
         limit: 100,
-      });
+      }, force);
       const appList = res?.apps || (Array.isArray(res) ? (res as any) : []);
       setApps(Array.isArray(appList) ? appList : []);
       setTotal(typeof res?.total === 'number' ? res.total : (Array.isArray(appList) ? appList.length : 0));
@@ -158,7 +158,7 @@ export const AppsTab: React.FC = () => {
           </select>
 
           <button
-            onClick={loadApps}
+            onClick={() => loadApps(true)}
             title="Reload table"
             className="p-1 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
           >
