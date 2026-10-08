@@ -1,0 +1,4 @@
+/health /health 200
+/api/*  /api/:splat  200
+/v1/*   /v1/:splat   200
+/*      /index.html  200

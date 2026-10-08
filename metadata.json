@@ -1,0 +1,6 @@
+{
+  "name": "VCON License Server",
+  "description": "Cryptographic license validation, hardware locking, and client SDK integration",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
