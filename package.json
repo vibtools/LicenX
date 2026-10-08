@@ -1,14 +1,18 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.3",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "prebuild": "npm run build:sdk-archive",
     "build": "vite build",
+    "build:sdk-archive": "node scripts/buildPythonSdkArchive.mjs",
     "start": "node server.ts",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "verify:sdk-archive": "python tests/verify_sdk_archive.py"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1147.0",

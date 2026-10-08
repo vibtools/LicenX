@@ -39,7 +39,7 @@ class LoginManager:
     def login(self, license_key: str, pin: Optional[str] = None) -> LoginResult:
         """
         Performs full online authentication against license server.
-        Supports optional numeric PIN verification.
+        The legacy pin argument is accepted for compatibility but ignored.
         """
         if not license_key or not license_key.strip():
             return LoginResult(
@@ -58,7 +58,6 @@ class LoginManager:
             license_key=normalized_key,
             hwid=hwid,
             telemetry=telemetry,
-            pin=pin,
         )
 
         if not is_valid:

@@ -102,9 +102,10 @@ class XLicenseClient:
     def login(self, license_key: str, pin: Optional[str] = None) -> LoginResult:
         """
         Validates license key against server and binds current hardware.
-        Supports optional numeric 4-digit PIN for PIN-protected licenses.
+        The legacy pin argument is accepted for compatibility but ignored;
+        license PINs are only used by the web control panel.
         """
-        result = self.login_manager.login(license_key, pin=pin)
+        result = self.login_manager.login(license_key)
         if result.success:
             self._authenticated = True
             self._current_key = license_key.strip()

@@ -11,7 +11,7 @@ from .login import LoginManager, LoginResult
 from .logout import LogoutManager
 from .client import XLicenseClient
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 __all__ = [
     "XLicenseClient",
     "SDKConfig",

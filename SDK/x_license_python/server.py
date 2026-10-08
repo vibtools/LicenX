@@ -116,7 +116,7 @@ class ServerCommunicator:
                 # Check if RSA key (contains RSA or length > 100 bytes)
                 if "RSA" in pem_str or len(pem_str) > 200:
                     return self._verify_rsa_standard_library(canonical_str, signature_b64, pem_str)
-                return True
+                return False
         except Exception as e:
             print(f"[VCON-SDK] Cryptographic signature verification failed: {e}")
             return False
@@ -257,6 +257,7 @@ class ServerCommunicator:
     ) -> Tuple[bool, int, Dict[str, Any]]:
         """
         Calls /api/v1/license/validate endpoint.
+        The legacy pin argument is accepted for compatibility but never sent.
         Returns (is_valid, http_status_code, response_payload)
         """
         url = self._build_url("api/v1/license/validate")
@@ -270,19 +271,13 @@ class ServerCommunicator:
             "client_time": int(time.time() * 1000),
             "telemetry": telemetry,
         }
-        if pin and str(pin).strip():
-            body["pin"] = str(pin).strip()
 
         status_code, data = self._http_post(url, body, self.config.request_timeout_seconds)
 
         if status_code == 200 and data.get("valid") is True:
-            # Extract signature & public key
+            # The configured public key is the trust anchor; response keys are not trusted.
             sig = data.pop("signature", None)
-            server_pub = data.pop("public_key", None)
-
-            # If public key wasn't in config, auto-adopt from secure first response
-            if not self.config.public_key_pem and server_pub:
-                self.config.public_key_pem = server_pub
+            data.pop("public_key", None)
 
             # Verify cryptographic signature
             if not sig or not self.verify_signature(data, sig):

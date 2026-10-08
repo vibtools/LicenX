@@ -151,6 +151,10 @@ export function generateLicenseKey(prefix = 'VCON', segments = 3, segmentLength 
   return parts.join('-');
 }
 
+export function generateLicensePin(): string {
+  return crypto.randomInt(1000, 10000).toString();
+}
+
 /**
  * Simple signed session token
  */

@@ -2,25 +2,26 @@
 
 Production-grade, modular client protection and hardware locking SDK for Python applications. Fully integrated with VCON License Server with Multi-App Scoping, Enterprise RSA 2048-bit Cryptographic Response Verification, 20-minute Heartbeat Daemon, and Dynamic Hardware Slot Unbinding on exit.
 
-> 📖 **Comprehensive Documentation:**  
-> - 🇬🇧 **[English Complete A to Z Integration Guide (docs/GUIDE_EN.md)](./docs/GUIDE_EN.md)**  
+> 📖 **Comprehensive Documentation:**
+>
+> - 🇬🇧 **[English Complete A to Z Integration Guide (docs/GUIDE_EN.md)](./docs/GUIDE_EN.md)**
 > - 🇧🇩 **[বাংলা সম্পূর্ণ A to Z গাইডলাইন ও ব্যবহারের নিয়ম (docs/GUIDE_BN.md)](./docs/GUIDE_BN.md)**
 
 ---
 
 ## 📦 Architecture & Module Responsibilities
 
-| Module | Scope & Responsibility |
-|---|---|
-| **`config.py`** | Auto-discovers and parses `<app_name>_vcon_config.json` or `vcon_config.json`. Normalizes server URLs and provides standard configurations. |
-| **`device.py`** | Collects hardware telemetry (Motherboard UUID, Primary Disk Serial, CPU model, MAC address, LAN/WAN IP, Timezone) and computes deterministic SHA-256 `HWID-XXXX-XXXX-XXXX-XXXX`. |
-| **`server.py`** | Transport and protocol engine. Supports `requests` with native `urllib` standard-library fallback. Verifies server RSA 2048-bit and Ed25519 signatures, pings heartbeat, and delivers unbind notifications. |
-| **`login.py`** | Handles strict online validation and saved session auto-login. Validates SSL, RSA 2048-bit signature, app scope, device limit, and active status. Disallows offline logins. |
-| **`logout.py`** | Manages manual logout and process exit hooks (`atexit`, `SIGINT`, `SIGTERM`). Instantly notifies the server to mark device as `logged_out` and release the hardware slot. |
-| **`storage.py`** | Secure session storage in the OS temp directory (`.vcon_session_<app>.dat`) and runs a low-overhead background daemon thread every 20 minutes to verify server state. |
-| **`offline.py`** | Enforces online-only security policies and detects system clock manipulation / rollback attacks. |
-| **`client.py`** | High-level facade (`XLicenseClient`) exposing clean, intuitive methods for desktop and CLI Python applications. |
-| **`example_app.py`**| Complete lifecycle demonstration application ready to test and run. |
+| Module               | Scope & Responsibility                                                                                                                                                                                      |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`config.py`**      | Auto-discovers and parses `<app_name>_vcon_config.json` or `vcon_config.json`. Normalizes server URLs and provides standard configurations.                                                                 |
+| **`device.py`**      | Collects hardware telemetry (Motherboard UUID, Primary Disk Serial, CPU model, MAC address, LAN/WAN IP, Timezone) and computes deterministic SHA-256 `HWID-XXXX-XXXX-XXXX-XXXX`.                            |
+| **`server.py`**      | Transport and protocol engine. Supports `requests` with native `urllib` standard-library fallback. Verifies server RSA 2048-bit and Ed25519 signatures, pings heartbeat, and delivers unbind notifications. |
+| **`login.py`**       | Handles strict online validation and saved session auto-login. Validates SSL, RSA 2048-bit signature, app scope, device limit, and active status. Disallows offline logins.                                 |
+| **`logout.py`**      | Manages manual logout and process exit hooks (`atexit`, `SIGINT`, `SIGTERM`). Instantly notifies the server to mark device as `logged_out` and release the hardware slot.                                   |
+| **`storage.py`**     | Secure session storage in the OS temp directory (`.vcon_session_<app>.dat`) and runs a low-overhead background daemon thread every 20 minutes to verify server state.                                       |
+| **`offline.py`**     | Enforces online-only security policies and detects system clock manipulation / rollback attacks.                                                                                                            |
+| **`client.py`**      | High-level facade (`XLicenseClient`) exposing clean, intuitive methods for desktop and CLI Python applications.                                                                                             |
+| **`example_app.py`** | Complete lifecycle demonstration application ready to test and run.                                                                                                                                         |
 
 ---
 
@@ -29,12 +30,14 @@ Production-grade, modular client protection and hardware locking SDK for Python 
 ### 1. Requirements
 
 The SDK runs out of the box on standard **Python 3.8+**.
-For full C-accelerated RSA / Ed25519 signature verification on the client machine:
+For Ed25519 signature verification and the preferred HTTP transport on the client machine:
+
 ```bash
 pip install -r requirements.txt
 # Installs: requests>=2.28.0, cryptography>=41.0.0
 ```
-*(Note: If third-party packages are not installed, the SDK automatically falls back to native standard-library `urllib.request` and pure Python standard-library RSA verification using built-in `pow(sig, e, n)`).*
+
+_(Without `cryptography`, the SDK can verify supported RSA signatures through its standard-library fallback, but it rejects Ed25519 signatures it cannot verify. It never accepts an unverifiable signature.)_
 
 ### 2. Configuration Setup
 
@@ -49,6 +52,10 @@ Download `<app_name>_vcon_config.json` from the Admin Panel (**Applications** ta
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwGQ8N0AkXoz/BQIXlh2F...\n-----END PUBLIC KEY-----\n"
 }
 ```
+
+`public_key_pem` is required for license authorization. Use the key in the Admin Panel's downloaded client config and provision that file/key through a trusted channel. Do not bootstrap trust by copying a key from an unauthenticated server response or `/v1/public-key`; the SDK ignores keys included in validation responses and rejects authorization when no key is configured.
+
+**Existing-client migration:** Before upgrading deployed clients, ensure their config contains the intended server `public_key_pem`. A missing/empty key now causes validation to fail closed. For key rotation, distribute and install the new trusted public key before switching the server to sign with its matching private key; the SDK does not automatically trust a newly returned key.
 
 ### 3. Application Integration
 

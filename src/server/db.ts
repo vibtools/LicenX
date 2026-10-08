@@ -1,57 +1,125 @@
-import { createClient, type Client } from '@libsql/client';
-import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
+import { createClient, type Client } from "@libsql/client";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 let dbClient: Client | null = null;
-let currentDbUrl = '';
-let currentAuthToken = '';
+let currentDbUrl = "";
+let currentAuthToken = "";
 
 let isSchemaInitialized = false;
 let schemaInitPromise: Promise<void> | null = null;
+
+interface DatabaseEnvironment {
+  TURSO_DATABASE_URL?: string;
+  DATABASE_URL?: string;
+  TURSO_AUTH_TOKEN?: string;
+}
+
+interface ResolvedDatabaseConfig {
+  url: string;
+  authToken?: string;
+  requireRemote: boolean;
+  isRemoteUrl: boolean;
+}
+
+export class DatabaseConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DatabaseConfigurationError";
+  }
+}
+
+export class RemoteDatabaseInitializationError extends Error {
+  constructor() {
+    super(
+      "Unable to initialize the configured remote database client. Verify its URL and credentials.",
+    );
+    this.name = "RemoteDatabaseInitializationError";
+  }
+}
 
 export function isTursoPlaceholder(url?: string, token?: string): boolean {
   if (!url) return true;
   const cleanUrl = url.trim().toLowerCase();
   if (
-    cleanUrl.includes('your-database-name') ||
-    cleanUrl.includes('example.com') ||
-    cleanUrl.includes('placeholder') ||
-    cleanUrl.includes('[database-name]') ||
-    cleanUrl.includes('[org]') ||
-    cleanUrl === 'libsql://' ||
-    cleanUrl === 'https://'
+    cleanUrl.includes("your-database-name") ||
+    cleanUrl.includes("example.com") ||
+    cleanUrl.includes("placeholder") ||
+    cleanUrl.includes("[database-name]") ||
+    cleanUrl.includes("[org]") ||
+    cleanUrl === "libsql://" ||
+    cleanUrl === "https://"
   ) {
     return true;
   }
-  if (token && (token.includes('your-turso-auth-token') || token.includes('placeholder') || token.includes('[auth-token]'))) {
+  if (
+    token &&
+    (token.includes("your-turso-auth-token") ||
+      token.includes("placeholder") ||
+      token.includes("[auth-token]"))
+  ) {
     return true;
   }
   return false;
 }
 
-export function getDbClient(env?: any): Client {
-  let url =
-    env?.TURSO_DATABASE_URL ||
-    env?.DATABASE_URL ||
-    (typeof process !== 'undefined' ? process.env?.TURSO_DATABASE_URL || process.env?.DATABASE_URL : '') ||
-    'file:vcon_data.db';
+export function resolveDatabaseConfig(
+  env?: DatabaseEnvironment,
+  nodeEnvironment = typeof process !== "undefined"
+    ? process.env.NODE_ENV
+    : undefined,
+  nodeEnv: DatabaseEnvironment = typeof process !== "undefined"
+    ? process.env
+    : {},
+): ResolvedDatabaseConfig {
+  const requireRemote = env !== undefined || nodeEnvironment === "production";
+  const runtimeEnv = env ?? nodeEnv;
+  const configuredUrl =
+    runtimeEnv.TURSO_DATABASE_URL || runtimeEnv.DATABASE_URL || "";
+  const authToken = runtimeEnv.TURSO_AUTH_TOKEN || undefined;
 
-  let authToken =
-    env?.TURSO_AUTH_TOKEN ||
-    (typeof process !== 'undefined' ? process.env?.TURSO_AUTH_TOKEN : undefined) ||
-    undefined;
-
-  if (isTursoPlaceholder(url, authToken)) {
-    url = 'file:vcon_data.db';
-    authToken = undefined;
+  if (isTursoPlaceholder(configuredUrl, authToken)) {
+    if (requireRemote) {
+      throw new DatabaseConfigurationError(
+        "Remote database configuration is required in production/serverless mode. Configure TURSO_DATABASE_URL or DATABASE_URL.",
+      );
+    }
+    return {
+      url: "file:vcon_data.db",
+      authToken: undefined,
+      requireRemote: false,
+      isRemoteUrl: false,
+    };
   }
 
-  if (!dbClient || currentDbUrl !== url || currentAuthToken !== (authToken || '')) {
+  const isRemoteUrl = /^(libsql|https?):\/\//i.test(configuredUrl.trim());
+  if (requireRemote && !isRemoteUrl) {
+    throw new DatabaseConfigurationError(
+      "Production/serverless database configuration must use a remote libsql, http, or https URL.",
+    );
+  }
+
+  return { url: configuredUrl, authToken, requireRemote, isRemoteUrl };
+}
+
+export function getDbClient(env?: DatabaseEnvironment): Client {
+  const { url, authToken, requireRemote, isRemoteUrl } =
+    resolveDatabaseConfig(env);
+
+  if (
+    !dbClient ||
+    currentDbUrl !== url ||
+    currentAuthToken !== (authToken || "")
+  ) {
     // If it's a local file URL, make sure the directory exists (only in Node.js runtime)
-    if (url.startsWith('file:') && typeof fs !== 'undefined' && typeof fs.existsSync === 'function') {
+    if (
+      url.startsWith("file:") &&
+      typeof fs !== "undefined" &&
+      typeof fs.existsSync === "function"
+    ) {
       try {
-        const filePath = url.replace('file:', '');
+        const filePath = url.replace("file:", "");
         const dir = path.dirname(path.resolve(filePath));
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
@@ -67,12 +135,18 @@ export function getDbClient(env?: any): Client {
         authToken,
       });
       currentDbUrl = url;
-      currentAuthToken = authToken || '';
+      currentAuthToken = authToken || "";
     } catch (err) {
-      console.warn('[VCON] Error creating client for url, falling back to local file:vcon_data.db:', err);
-      dbClient = createClient({ url: 'file:vcon_data.db' });
-      currentDbUrl = 'file:vcon_data.db';
-      currentAuthToken = '';
+      if (requireRemote || isRemoteUrl) {
+        throw new RemoteDatabaseInitializationError();
+      }
+      console.warn(
+        "[VCON] Error creating client for url, falling back to local file:vcon_data.db:",
+        err,
+      );
+      dbClient = createClient({ url: "file:vcon_data.db" });
+      currentDbUrl = "file:vcon_data.db";
+      currentAuthToken = "";
     }
   }
 
@@ -86,24 +160,44 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
   schemaInitPromise = (async () => {
     let db = getDbClient(env);
 
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS user_control_pin_attempts (
+        attempt_key TEXT PRIMARY KEY,
+        window_started_at INTEGER NOT NULL,
+        failed_attempts INTEGER NOT NULL DEFAULT 0,
+        blocked_until INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_user_control_pin_attempts_window
+      ON user_control_pin_attempts(window_started_at)
+    `);
+
     try {
       // Fast probe: check if all 5 core tables exist
       const check = await db.execute(
-        "SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name IN ('admin_config', 'apps', 'licenses', 'devices', 'validation_logs')"
+        "SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name IN ('admin_config', 'apps', 'licenses', 'devices', 'validation_logs')",
       );
       const count = Number(check.rows[0]?.c || 0);
       if (count >= 5) {
         // Fast path: Database schema already exists!
         // Ensure high-performance indexes exist silently
         try {
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON licenses(created_at DESC)');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_devices_first_bound ON devices(first_bound_at DESC)');
+          await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON licenses(created_at DESC)",
+          );
+          await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_devices_first_bound ON devices(first_bound_at DESC)",
+          );
         } catch {}
         isSchemaInitialized = true;
         return;
       }
     } catch (probeError) {
-      console.warn('[VCON] Database connection probe check failed:', probeError);
+      console.warn(
+        "[VCON] Database connection probe check failed:",
+        probeError,
+      );
     }
 
     // 1. Admin config table
@@ -122,14 +216,16 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
       );
     `);
 
-  try {
-    await db.execute('ALTER TABLE admin_config ADD COLUMN site_settings_json TEXT');
-  } catch {
-    // Column already exists, ignore
-  }
+    try {
+      await db.execute(
+        "ALTER TABLE admin_config ADD COLUMN site_settings_json TEXT",
+      );
+    } catch {
+      // Column already exists, ignore
+    }
 
-  // 2. Apps table (Multi-App Scoping & Config)
-  await db.execute(`
+    // 2. Apps table (Multi-App Scoping & Config)
+    await db.execute(`
     CREATE TABLE IF NOT EXISTS apps (
       id TEXT PRIMARY KEY,
       app_slug TEXT UNIQUE NOT NULL,
@@ -143,15 +239,15 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
     );
   `);
 
-  await db.execute(`
+    await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_apps_slug ON apps(app_slug);
   `);
-  await db.execute(`
+    await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_apps_status ON apps(status);
   `);
 
-  // 3. Licenses table
-  await db.execute(`
+    // 3. Licenses table
+    await db.execute(`
     CREATE TABLE IF NOT EXISTS licenses (
       id TEXT PRIMARY KEY,
       key TEXT UNIQUE NOT NULL,
@@ -173,33 +269,33 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
     );
   `);
 
-  // Ensure app_id column exists if table existed previously without it
-  try {
-    await db.execute('ALTER TABLE licenses ADD COLUMN app_id TEXT');
-  } catch {
-    // Column already exists, ignore
-  }
+    // Ensure app_id column exists if table existed previously without it
+    try {
+      await db.execute("ALTER TABLE licenses ADD COLUMN app_id TEXT");
+    } catch {
+      // Column already exists, ignore
+    }
 
-  // Ensure pin column exists if table existed previously without it
-  try {
-    await db.execute('ALTER TABLE licenses ADD COLUMN pin TEXT');
-  } catch {
-    // Column already exists, ignore
-  }
+    // Ensure pin column exists if table existed previously without it
+    try {
+      await db.execute("ALTER TABLE licenses ADD COLUMN pin TEXT");
+    } catch {
+      // Column already exists, ignore
+    }
 
-  // Index on license key
-  await db.execute(`
+    // Index on license key
+    await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(key);
   `);
-  await db.execute(`
+    await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_licenses_status ON licenses(status);
   `);
-  await db.execute(`
+    await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_licenses_app ON licenses(app_id);
   `);
 
-  // 4. Devices table (HWID bindings)
-  await db.execute(`
+    // 4. Devices table (HWID bindings)
+    await db.execute(`
     CREATE TABLE IF NOT EXISTS devices (
       id TEXT PRIMARY KEY,
       license_id TEXT NOT NULL,
@@ -214,15 +310,15 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
     );
   `);
 
-  await db.execute(`
+    await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_devices_license_id ON devices(license_id);
   `);
-  await db.execute(`
+    await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_devices_hwid ON devices(hwid);
   `);
 
-  // 5. Validation logs table
-  await db.execute(`
+    // 5. Validation logs table
+    await db.execute(`
     CREATE TABLE IF NOT EXISTS validation_logs (
       id TEXT PRIMARY KEY,
       license_key TEXT,
@@ -236,23 +332,29 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
     );
   `);
 
-  try {
-    await db.execute('ALTER TABLE validation_logs ADD COLUMN app_slug TEXT');
-  } catch {
-    // Column already exists, ignore
-  }
+    try {
+      await db.execute("ALTER TABLE validation_logs ADD COLUMN app_slug TEXT");
+    } catch {
+      // Column already exists, ignore
+    }
 
-  await db.execute(`
+    await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_logs_created_at ON validation_logs(created_at DESC);
   `);
-  try {
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_logs_action ON validation_logs(action, created_at DESC);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON licenses(created_at DESC);');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_devices_first_bound ON devices(first_bound_at DESC);');
-  } catch {}
+    try {
+      await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_logs_action ON validation_logs(action, created_at DESC);",
+      );
+      await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON licenses(created_at DESC);",
+      );
+      await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_devices_first_bound ON devices(first_bound_at DESC);",
+      );
+    } catch {}
 
-  // 6. R2 Backups history
-  await db.execute(`
+    // 6. R2 Backups history
+    await db.execute(`
     CREATE TABLE IF NOT EXISTS r2_backups (
       id TEXT PRIMARY KEY,
       filename TEXT NOT NULL,
@@ -263,27 +365,27 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
     );
   `);
 
-  // 7. Auto seed default app if no apps exist
-  const existingApps = await db.execute('SELECT id FROM apps LIMIT 1');
-  if (existingApps.rows.length === 0) {
-    const now = Date.now();
-    await db.execute({
-      sql: `INSERT INTO apps (id, app_slug, display_name, min_version, status, app_secret, description, created_at, updated_at)
+    // 7. Auto seed default app if no apps exist
+    const existingApps = await db.execute("SELECT id FROM apps LIMIT 1");
+    if (existingApps.rows.length === 0) {
+      const now = Date.now();
+      await db.execute({
+        sql: `INSERT INTO apps (id, app_slug, display_name, min_version, status, app_secret, description, created_at, updated_at)
             VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-      args: [
-        'app_vcon_default',
-        'vcon_default',
-        'VCON Default Suite',
-        '1.0.0',
-        'sec_' + crypto.randomBytes(16).toString('hex'),
-        'Default core application suite',
-        now,
-        now,
-      ],
-    });
-  }
+        args: [
+          "app_vcon_default",
+          "vcon_default",
+          "VCON Default Suite",
+          "1.0.0",
+          "sec_" + crypto.randomBytes(16).toString("hex"),
+          "Default core application suite",
+          now,
+          now,
+        ],
+      });
+    }
 
-  isSchemaInitialized = true;
+    isSchemaInitialized = true;
   })().finally(() => {
     schemaInitPromise = null;
   });

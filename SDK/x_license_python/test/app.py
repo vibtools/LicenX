@@ -199,7 +199,9 @@ class DiagnosticEngine:
             return False, "Target app_name is empty!"
 
         has_pub = bool(self.config.public_key_pem and "PUBLIC KEY" in self.config.public_key_pem)
-        key_type = "Pre-configured RSA PEM" if has_pub else "Will auto-fetch from server handshake"
+        if not has_pub:
+            return False, "Missing preconfigured trusted public_key_pem"
+        key_type = "Preconfigured trusted public key"
         self.log(f"App Scope: {self.config.app_name} | Key Status: {key_type}", "INFO")
         return True, f"Scope: '{self.config.app_name}', Server: '{self.config.server_url}'"
 
@@ -219,6 +221,12 @@ class DiagnosticEngine:
         return True, f"Server online: {sys_name} ({latency_ms}ms latency)"
 
     def _test_public_key_handshake(self) -> Tuple[bool, str]:
+        configured_key = self.config.public_key_pem.strip()
+        if not configured_key:
+            return False, "No preconfigured trusted public_key_pem; refusing to trust a server-supplied key"
+        if "\\n" in configured_key and "\n" not in configured_key:
+            configured_key = configured_key.replace("\\n", "\n").strip()
+
         url = self.communicator._build_url("api/v1/public-key")
         status, data = self.communicator._http_get(url, 8)
 
@@ -231,11 +239,13 @@ class DiagnosticEngine:
         if not pub_pem or "PUBLIC KEY" not in pub_pem:
             return False, "Server response missing valid PEM public key!"
 
-        # Cache on client if missing
-        if not self.config.public_key_pem:
-            self.config.public_key_pem = pub_pem
+        server_key = pub_pem.strip()
+        if "\\n" in server_key and "\n" not in server_key:
+            server_key = server_key.replace("\\n", "\n")
+        if server_key != configured_key:
+            return False, "Server public key does not match the preconfigured trusted key"
 
-        return True, f"Public Key verified ({algo}, length: {len(pub_pem)} chars)"
+        return True, f"Server public key matches the preconfigured key ({algo}, length: {len(pub_pem)} chars)"
 
     def _test_site_settings(self) -> Tuple[bool, str]:
         url = self.communicator._build_url("api/public/site-settings")

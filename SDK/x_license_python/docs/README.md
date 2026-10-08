@@ -6,15 +6,17 @@ Welcome to the documentation repository for the **VCON Python Client SDK (`x_lic
 
 ## 🌐 Choose Your Preferred Language / ভাষা নির্বাচন করুন
 
-- **[English Documentation: Complete A to Z Integration Guide (GUIDE_EN.md)](./GUIDE_EN.md)**  
-  *Comprehensive guide covering architecture, HWID node locking, 20-min daemon, Ed25519 signing, CLI & Tkinter examples, and full API reference.*
+- **[English Documentation: Complete A to Z Integration Guide (GUIDE_EN.md)](./GUIDE_EN.md)**
+  _Comprehensive guide covering architecture, HWID node locking, 20-min daemon, Ed25519 signing, CLI & Tkinter examples, and full API reference._
 
-- **[বাংলা ডকুমেন্টেশন: সম্পূর্ণ A to Z গাইডলাইন ও ব্যবহারের নিয়ম (GUIDE_BN.md)](./GUIDE_BN.md)**  
-  *আর্কিটেকচার, HWID লকিং, ২০-মিনিট ডেমন পিং, Ed25519 স্বাক্ষর, CLI ও Tkinter অ্যাপ ইন্টিগ্রেশন এবং সম্পূর্ণ API নির্দেশিকা।*
+- **[বাংলা ডকুমেন্টেশন: সম্পূর্ণ A to Z গাইডলাইন ও ব্যবহারের নিয়ম (GUIDE_BN.md)](./GUIDE_BN.md)**
+  _আর্কিটেকচার, HWID লকিং, ২০-মিনিট ডেমন পিং, Ed25519 স্বাক্ষর, CLI ও Tkinter অ্যাপ ইন্টিগ্রেশন এবং সম্পূর্ণ API নির্দেশিকা।_
 
 ---
 
 ## ⚡ 60-Second Quick Start
+
+Before running the SDK, place the Admin Panel-downloaded client config in the auto-discovery location and confirm it contains the trusted `public_key_pem`. License validation fails closed when this key is missing; a key returned by the server is not adopted automatically.
 
 ```python
 from x_license_python import XLicenseClient

@@ -68,6 +68,7 @@ The VCON Python SDK provides client-side protection by communicating with your c
 ```
 
 ### Key Security Principles:
+
 - **Zero Offline Bypass:** Clients cannot run in offline mode unless an active, unrevoked session exists and passes periodic validation.
 - **Hardware-Enforced Node Locking:** The server limits each key to a designated number of active machines (e.g. 1 device, 5 devices).
 - **Dynamic Slot Releasing:** When a user closes the application, exit hooks notify the server to release the device slot so the same license can be transferred to another computer without administrator intervention.
@@ -78,18 +79,23 @@ The VCON Python SDK provides client-side protection by communicating with your c
 ## 2. Prerequisites & Installation
 
 ### Requirements
+
 - **Python Version:** 3.8, 3.9, 3.10, 3.11, or 3.12+
 - **Operating Systems:** Windows 10/11, macOS (Intel & Apple Silicon), Linux (Ubuntu, Debian, CentOS, Arch, etc.)
 
 ### Standard Library Ready (Zero Mandatory Dependencies)
+
 The SDK is uniquely engineered to operate using **Python's standard library** (`urllib.request`, `hashlib`, `socket`, `platform`, `subprocess`, `json`, `time`, `threading`).
 
 ### Optional Production Packages (Recommended)
+
 For enhanced HTTP performance and local Ed25519 cryptographic signature checks:
+
 ```bash
 pip install requests>=2.28.0 cryptography>=41.0.0
 ```
-*(If these packages are not installed, the SDK seamlessly falls back to native standard-library `urllib` and logs an informative note).*
+
+_(If these packages are not installed, the SDK seamlessly falls back to native standard-library `urllib` and logs an informative note)._
 
 ---
 
@@ -98,6 +104,7 @@ pip install requests>=2.28.0 cryptography>=41.0.0
 You can configure the SDK using a JSON file or programmatically in your Python code.
 
 ### Option 1: Using `<app_name>_vcon_config.json` (Recommended)
+
 Download the configuration file from your **VCON Admin Panel** (**Applications Tab > Download Config**) and place it in your application root folder:
 
 ```json
@@ -117,20 +124,28 @@ Download the configuration file from your **VCON Admin Panel** (**Applications T
 }
 ```
 
+`public_key_pem` is a required trust anchor, not an optional convenience. Use the public key from the Admin Panel's downloaded application config and deliver that config through a trusted channel. Never take the first trusted key from the validation response or an unauthenticated `/v1/public-key` response. If the field is missing or empty, license validation is rejected.
+
+**Existing-client migration:** Before upgrading deployed clients, provision their config with the intended server public key. For key rotation, distribute and install the new public key before the server begins signing with the corresponding private key. The SDK does not trust-on-first-use or auto-adopt a replacement key.
+
 The SDK automatically searches for:
+
 1. `<app_name>_vcon_config.json` in the current working directory.
 2. `vcon_config.json` in the current working directory.
 3. The directory where the main execution script resides.
 
 ### Option 2: Programmatic Configuration
+
 You can pass parameters directly to `XLicenseClient`:
 
 ```python
 from x_license_python import XLicenseClient
 
+# Load this value from the Admin Panel config delivered through a trusted channel.
 client = XLicenseClient(
     app_name="photo_editor_pro",
     server_url="https://license.mycompany.com",
+    public_key_pem=TRUSTED_SERVER_PUBLIC_KEY_PEM,
     ping_interval_seconds=1200,   # 20 minutes
     auto_logout_on_exit=True,     # Free device slot on app close
     auto_save_session=True,       # Save key for seamless restart
@@ -142,6 +157,7 @@ client = XLicenseClient(
 ## 4. Core Authentication Workflow
 
 ### Initial User Login
+
 When an end-user runs your application for the first time, prompt them for their license key:
 
 ```python
@@ -161,6 +177,7 @@ else:
 ```
 
 ### Automatic Session Login (Auto-Login)
+
 On subsequent launches, your application should attempt `client.auto_login()` before prompting the user. `auto_login()` reads the cached key from the secure OS temp storage and validates it live with the server:
 
 ```python
@@ -180,7 +197,9 @@ else:
 ```
 
 ### Graceful Exit & Hardware Slot Release (Auto-Logout)
+
 When a user exits your app (via GUI close, `sys.exit()`, or `Ctrl+C`):
+
 - `logout.py` intercepts process termination hooks (`atexit`, `signal.SIGINT`, `signal.SIGTERM`).
 - It sends a lightweight notification to `/v1/license/logout`.
 - The server updates the device row to `status = 'logged_out'`.
@@ -188,6 +207,7 @@ When a user exits your app (via GUI close, `sys.exit()`, or `Ctrl+C`):
 - The saved session file is preserved locally, so when they reopen the app on the first PC, `auto_login()` reactivates the device.
 
 To perform a manual logout (e.g., when a user clicks "Sign Out" or "Unlink License"):
+
 ```python
 # Unlinks from server AND deletes saved license key from this machine
 client.logout(clear_saved_license=True)
@@ -200,6 +220,7 @@ client.logout(clear_saved_license=True)
 `DeviceManager` creates a deterministic, tamper-resistant Hardware Identifier (HWID).
 
 ### How the HWID is Calculated:
+
 1. **Motherboard UUID:** Retrieved from BIOS / `/sys/class/dmi/id/product_uuid` or WMI.
 2. **Primary Disk Serial:** Hardware serial number of the boot volume.
 3. **MAC Address:** Hardware Ethernet / Wi-Fi physical address.
@@ -226,6 +247,7 @@ print("Local IP   :", telemetry["local_ip"])
 ## 6. Background Heartbeat Daemon (20-Minute Cycle)
 
 Once authenticated, `BackgroundLicenseWorker` launches a daemon thread:
+
 - **Frequency:** Every 20 minutes (configurable via `ping_interval_seconds`).
 - **Resource Footprint:** Zero impact on UI thread; low CPU and memory footprint.
 - **Revocation Handling:** If an admin suspends, revokes, or deletes a license in the VCON Admin Panel, the background worker detects the rejection and fires the `on_license_revoked` callback.
@@ -240,6 +262,7 @@ client = XLicenseClient(on_license_revoked=handle_license_termination)
 ```
 
 You can also trigger an **on-demand ping** at any time:
+
 ```python
 status = client.ping()
 if not status.get("valid"):
@@ -253,6 +276,7 @@ if not status.get("valid"):
 Every successful verification payload returned by the server is cryptographically signed using the server's private Ed25519 key.
 
 ### Verification Steps:
+
 1. The server serializes the payload using **Canonical JSON** (alphabetically sorted keys, compact separators).
 2. The server signs the payload: `Signature = Ed25519_Sign(canonical_json, private_key)`.
 3. The client SDK extracts the `signature` and validates it against the `public_key_pem` bundled in your config.
@@ -263,6 +287,7 @@ Every successful verification payload returned by the server is cryptographicall
 ## 8. Multi-App Scoping & Isolation
 
 Licenses can be scoped to specific applications:
+
 - **App-Specific License:** Bound to a particular `app_slug` (e.g. `video_editor_pro`). Cannot be used to activate another application (e.g. `audio_master_pro`) even on the same server.
 - **Global License:** Licenses created with `app_id: null` can authenticate any application.
 - **Version Enforcement:** If the server configures a `min_version` (e.g., `2.1.0`) and the client sends `1.9.0`, the server returns HTTP `426 APP_VERSION_OUTDATED`.
@@ -272,6 +297,7 @@ Licenses can be scoped to specific applications:
 ## 9. System Clock Rollback & Anti-Tamper Protection
 
 To prevent attackers from bypassing license expiry by rewinding their system clock:
+
 1. Server returns `server_time` (Unix timestamp in milliseconds).
 2. `OfflineGuard.is_clock_tampered()` compares the local machine time with the trusted server time.
 3. If drift exceeds 15 minutes, the login is rejected with `CLOCK_TAMPERED`.
@@ -425,65 +451,71 @@ if __name__ == "__main__":
 
 ### `XLicenseClient`
 
-| Method | Parameters | Returns | Description |
-|---|---|---|---|
-| `__init__` | `config_path=None, config=None, app_name=None, server_url=None, on_license_revoked=None, ...` | `None` | Instantiates client. Auto-discovers config file if none provided. |
-| `login` | `license_key: str` | `LoginResult` | Validates key online, locks device slot, starts 20-min heartbeat daemon. |
-| `auto_login` | None | `LoginResult` | Loads saved session from OS temp storage and re-authenticates online. |
-| `logout` | `clear_saved_license: bool = True` | `bool` | Unbinds HWID from server, frees device slot, optionally clears cached key. |
-| `ping` | None | `Dict[str, Any]` | Executes on-demand server heartbeat ping. |
-| `is_authenticated` | None | `bool` | Returns `True` if active valid session is present. |
-| `get_tier` | None | `str` | Returns license tier name (e.g. `Standard`, `Pro`, `Enterprise`). |
-| `get_hwid` | None | `str` | Returns deterministic hardware identifier string. |
-| `get_device_telemetry` | None | `Dict[str, Any]` | Returns comprehensive hardware, OS, network, and timezone dict. |
-| `get_license_info` | None | `Optional[Dict]` | Returns full verified JSON payload from license server. |
+| Method                 | Parameters                                                                                    | Returns          | Description                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------- | ---------------- | -------------------------------------------------------------------------- |
+| `__init__`             | `config_path=None, config=None, app_name=None, server_url=None, on_license_revoked=None, ...` | `None`           | Instantiates client. Auto-discovers config file if none provided.          |
+| `login`                | `license_key: str`                                                                            | `LoginResult`    | Validates key online, locks device slot, starts 20-min heartbeat daemon.   |
+| `auto_login`           | None                                                                                          | `LoginResult`    | Loads saved session from OS temp storage and re-authenticates online.      |
+| `logout`               | `clear_saved_license: bool = True`                                                            | `bool`           | Unbinds HWID from server, frees device slot, optionally clears cached key. |
+| `ping`                 | None                                                                                          | `Dict[str, Any]` | Executes on-demand server heartbeat ping.                                  |
+| `is_authenticated`     | None                                                                                          | `bool`           | Returns `True` if active valid session is present.                         |
+| `get_tier`             | None                                                                                          | `str`            | Returns license tier name (e.g. `Standard`, `Pro`, `Enterprise`).          |
+| `get_hwid`             | None                                                                                          | `str`            | Returns deterministic hardware identifier string.                          |
+| `get_device_telemetry` | None                                                                                          | `Dict[str, Any]` | Returns comprehensive hardware, OS, network, and timezone dict.            |
+| `get_license_info`     | None                                                                                          | `Optional[Dict]` | Returns full verified JSON payload from license server.                    |
 
 ### `LoginResult` Dataclass
 
-| Attribute | Type | Description |
-|---|---|---|
-| `success` | `bool` | `True` if authentication succeeded and license is active. |
-| `status_code` | `int` | HTTP response code (e.g., `200`, `403`, `404`, `426`). |
-| `message` | `str` | Human-readable explanation from server. |
-| `code` | `str` | Programmatic error code (e.g. `OK`, `KEY_NOT_FOUND`, `DEVICE_LIMIT_REACHED`). |
-| `hwid` | `Optional[str]` | The machine HWID that was authenticated. |
-| `license_key` | `Optional[str]` | The normalized license key string. |
-| `license_data` | `Optional[Dict]` | Verified payload containing tier, expiry, limits, etc. |
+| Attribute      | Type             | Description                                                                   |
+| -------------- | ---------------- | ----------------------------------------------------------------------------- |
+| `success`      | `bool`           | `True` if authentication succeeded and license is active.                     |
+| `status_code`  | `int`            | HTTP response code (e.g., `200`, `403`, `404`, `426`).                        |
+| `message`      | `str`            | Human-readable explanation from server.                                       |
+| `code`         | `str`            | Programmatic error code (e.g. `OK`, `KEY_NOT_FOUND`, `DEVICE_LIMIT_REACHED`). |
+| `hwid`         | `Optional[str]`  | The machine HWID that was authenticated.                                      |
+| `license_key`  | `Optional[str]`  | The normalized license key string.                                            |
+| `license_data` | `Optional[Dict]` | Verified payload containing tier, expiry, limits, etc.                        |
 
 ---
 
 ## 12. Server Response & Error Code Reference
 
-| Error Code | HTTP Status | Meaning | Recommended User Action |
-|---|---|---|---|
-| `OK` | 200 | License valid and device slot active | Grant full application access |
-| `KEY_NOT_FOUND` | 404 | Key does not exist in server database | Ask user to double-check their key |
-| `DEVICE_LIMIT_REACHED` | 403 | Max allowed devices are already active | Close app on other PC, or upgrade license |
-| `DEVICE_UNBOUND` | 403 | Device was unlinked or logged out | Re-authenticate via `login()` |
-| `LICENSE_EXPIRED` | 403 | License validity duration has elapsed | Prompt user to renew license |
-| `LICENSE_REVOKED` | 403 | Administrator revoked license | Terminate application access |
-| `LICENSE_SUSPENDED`| 403 | Administrator temporarily suspended license | Notify user to contact support |
-| `LICENSE_APP_MISMATCH` | 403 | Key is for a different product | Prompt user for the correct product key |
-| `APP_VERSION_OUTDATED` | 426 | App version is below `min_version` | Direct user to download software update |
-| `CLOCK_TAMPERED` | 403 | Local machine clock differs from server | Instruct user to sync system clock |
-| `SIGNATURE_FAILED` | 403 | Cryptographic Ed25519 signature mismatch | Reject untrusted or spoofed server |
+| Error Code             | HTTP Status | Meaning                                     | Recommended User Action                   |
+| ---------------------- | ----------- | ------------------------------------------- | ----------------------------------------- |
+| `OK`                   | 200         | License valid and device slot active        | Grant full application access             |
+| `KEY_NOT_FOUND`        | 404         | Key does not exist in server database       | Ask user to double-check their key        |
+| `DEVICE_LIMIT_REACHED` | 403         | Max allowed devices are already active      | Close app on other PC, or upgrade license |
+| `DEVICE_UNBOUND`       | 403         | Device was unlinked or logged out           | Re-authenticate via `login()`             |
+| `LICENSE_EXPIRED`      | 403         | License validity duration has elapsed       | Prompt user to renew license              |
+| `LICENSE_REVOKED`      | 403         | Administrator revoked license               | Terminate application access              |
+| `LICENSE_SUSPENDED`    | 403         | Administrator temporarily suspended license | Notify user to contact support            |
+| `LICENSE_APP_MISMATCH` | 403         | Key is for a different product              | Prompt user for the correct product key   |
+| `APP_VERSION_OUTDATED` | 426         | App version is below `min_version`          | Direct user to download software update   |
+| `CLOCK_TAMPERED`       | 403         | Local machine clock differs from server     | Instruct user to sync system clock        |
+| `SIGNATURE_FAILED`     | 403         | Cryptographic Ed25519 signature mismatch    | Reject untrusted or spoofed server        |
 
 ---
 
 ## 13. FAQ & Troubleshooting
 
 ### Q1: Can a user run my software without internet access?
+
 **A:** By design, the VCON SDK enforces strict online security. The initial activation and session restorations require an active internet connection to contact your license server.
 
 ### Q2: What happens if the network drops temporarily while using the app?
+
 **A:** The 20-minute background daemon handles intermittent network errors gracefully. Temporary connection drops do not immediately terminate the application. Only explicit rejection responses (such as `403 LICENSE_REVOKED` or `DEVICE_UNBOUND`) trigger termination.
 
 ### Q3: How do I compile my Python app into an executable (`.exe` or macOS `.app`)?
+
 **A:** Use PyInstaller or Nuitka:
+
 ```bash
 pyinstaller --onefile --add-data "my_app_vcon_config.json:." main.py
 ```
+
 Because the SDK includes native `urllib` standard-library fallbacks, it bundles cleanly without requiring complex PyInstaller hidden imports.
 
 ---
-*VCON License Management System — Production-Grade Software Protection.*
+
+_VCON License Management System — Production-Grade Software Protection._

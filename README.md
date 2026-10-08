@@ -24,18 +24,21 @@
 ## 🚀 Key Features
 
 ### 🔐 Cryptographic Integrity & Anti-Piracy
+
 - **RSA-2048 / Ed25519 Asymmetric Signatures:** Every license payload is digitally signed by the server's private key. Client apps verify authenticity using standard public key cryptography without sending secrets.
 - **Hardware Lock (HWID Fingerprinting):** Unique client device fingerprinting (CPU, motherboard, OS, disk UUID, and MAC address hashing) to strictly enforce machine limits per license.
 - **Clock Tampering & Replay Protection:** Timestamp-drift detection, monotonic clock checks, and anti-replay nonce tracking.
 - **Heartbeat & Session Tracking:** Background daemon ping worker maintaining active session state with automatic stale lease reclamation.
 
 ### ⚡ Dual-Runtime Architecture
+
 - **Node.js / Express Server:** Run locally, on VPS, AWS, GCP, Render, or Docker with standard Node 18+.
 - **Cloudflare Pages & Functions (Edge):** 100% serverless edge deployment with global low-latency responses, zero server maintenance, and automatic scaling.
 - **Turso / libSQL / SQLite Support:** Distributed edge SQLite database with zero connection pooling bottlenecks.
 - **Cloudflare R2 Bucket Storage:** Native cloud object storage for automatic bulk CSV license backups and custom brand assets (Logo, Favicon, OG share cards).
 
 ### 🎛️ Unified Admin Panel & Live Tools
+
 - **Applications Hub:** Manage multi-tenant applications with custom slugs, version enforcement, and auto-generated client configs.
 - **License Engine:** Issue single or bulk licenses (up to 2,000 keys per batch in a single atomic database transaction) with custom prefixes, validity tiers, device limits, and 4-digit PINs.
 - **HWID Tracker & Device Inspector:** Live list of bound client hardware with one-click hardware detachment and force logout.
@@ -44,6 +47,7 @@
 - **Site Settings & Branding Control:** Full white-label customization of App Logo, Favicon, OG Image, SEO tags, support links (Telegram, Discord, Email), announcement banners, and public portal rules.
 
 ### 🌐 Self-Service Customer License Portal
+
 - **3-Metric Quick Check:** Safe public validation (status, device limit, and active bound count) without exposing private data.
 - **Self-Service HWID Reset:** Customers can securely reset their hardware bindings anytime using their private 4-digit PIN without needing admin intervention.
 
@@ -74,9 +78,10 @@
 ## 📦 Quick Start
 
 ### 1. Prerequisites
+
 - **Node.js 18+** or **20+**
 - **npm** or **pnpm**
-- *(Optional)* A free [Turso](https://turso.tech/) database and [Cloudflare R2](https://www.cloudflare.com/developer-platform/r2/) bucket for cloud persistence.
+- _(Optional)_ A free [Turso](https://turso.tech/) database and [Cloudflare R2](https://www.cloudflare.com/developer-platform/r2/) bucket for cloud persistence.
 
 ### 2. Clone & Install
 
@@ -160,27 +165,20 @@ Download `x_license_python.zip` directly from the Admin Panel or copy the `SDK/x
 ```python
 from x_license_python import XLicenseClient, SDKConfig
 
-# 1. Initialize Client
-config = SDKConfig(
-    server_url="https://licenx.yourdomain.com",
-    app_id="my-desktop-tool",
-    app_version="1.0.0",
-    heartbeat_interval_sec=1200,   # 20-minute heartbeat
-    auto_save_session=True,        # Offline caching
-    auto_login_enabled=True        # Auto-login on launch
-)
+# Download this app config from the Admin Panel and provision it through a trusted channel.
+# It must contain the server's independently trusted public_key_pem.
+config = SDKConfig.from_file("my_app_vcon_config.json")
 
 client = XLicenseClient(config)
 
-# 2. Authenticate
+# Authenticate with a license key.
 result = client.login(license_key="LICX-ABCD-1234-EF56")
 
 if result.success:
-    print(f"License Activated! Tier: {result.tier}")
-    print(f"Expires at: {result.expires_at}")
-    print(f"Bound Devices: {result.bound_devices}/{result.device_limit}")
+    print(f"License Activated! Tier: {client.get_tier()}")
+    print(f"Hardware ID: {result.hwid}")
 else:
-    print(f"Activation Failed: {result.error}")
+    print(f"Activation Failed ({result.code}): {result.message}")
 ```
 
 ### Manual Heartbeat & Logout
@@ -200,33 +198,33 @@ client.logout()
 
 ### Public & Client Verification
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
+| Method | Endpoint               | Description                                                       |
+| :----- | :--------------------- | :---------------------------------------------------------------- |
 | `POST` | `/v1/license/validate` | Authenticate license, register HWID, and receive RSA-signed token |
-| `POST` | `/v1/license/ping` | Heartbeat keep-alive verifying hardware binding |
-| `POST` | `/v1/license/logout` | Release hardware lock slot upon app termination |
-| `GET` | `/v1/public-key` | Retrieve server RSA-2048 public PEM key |
-| `GET` | `/health` | Server uptime and health probe |
+| `POST` | `/v1/license/ping`     | Heartbeat keep-alive verifying hardware binding                   |
+| `POST` | `/v1/license/logout`   | Release hardware lock slot upon app termination                   |
+| `GET`  | `/v1/public-key`       | Retrieve server RSA-2048 public PEM key                           |
+| `GET`  | `/health`              | Server uptime and health probe                                    |
 
 ### Self-Service Customer Portal
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
+| Method | Endpoint                 | Description                                                  |
+| :----- | :----------------------- | :----------------------------------------------------------- |
 | `POST` | `/v1/user/license/check` | Public quick status check (status, limit, active count only) |
-| `POST` | `/v1/user/control/open` | Open device manager with 4-digit PIN authentication |
-| `POST` | `/v1/user/control/reset` | Clear all bound hardware slots for license key |
+| `POST` | `/v1/user/control/open`  | Open device manager with 4-digit PIN authentication          |
+| `POST` | `/v1/user/control/reset` | Clear all bound hardware slots for license key               |
 
-### Admin Management *(Bearer Auth Required)*
+### Admin Management _(Bearer Auth Required)_
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/stats` | System overview telemetry and 24h request counters |
-| `GET/POST`| `/api/apps` | List and register tenant applications |
-| `GET/POST`| `/api/licenses` | Filter licenses and generate single/bulk keys |
-| `POST` | `/api/licenses/bulk` | High-performance single-batch key issuance (up to 2,000 keys) |
-| `POST` | `/api/licenses/bulk-action`| Bulk suspend, activate, revoke, reset, extend, or delete |
-| `POST` | `/api/settings/upload` | Upload branding assets (Logo, Favicon, OG card) to Cloudflare R2 |
-| `GET/POST`| `/api/settings/site-settings` | Configure global white-label site metadata & rules |
+| Method     | Endpoint                      | Description                                                      |
+| :--------- | :---------------------------- | :--------------------------------------------------------------- |
+| `GET`      | `/api/stats`                  | System overview telemetry and 24h request counters               |
+| `GET/POST` | `/api/apps`                   | List and register tenant applications                            |
+| `GET/POST` | `/api/licenses`               | Filter licenses and generate single/bulk keys                    |
+| `POST`     | `/api/licenses/bulk`          | High-performance single-batch key issuance (up to 2,000 keys)    |
+| `POST`     | `/api/licenses/bulk-action`   | Bulk suspend, activate, revoke, reset, extend, or delete         |
+| `POST`     | `/api/settings/upload`        | Upload branding assets (Logo, Favicon, OG card) to Cloudflare R2 |
+| `GET/POST` | `/api/settings/site-settings` | Configure global white-label site metadata & rules               |
 
 ---
 
@@ -246,5 +244,5 @@ Contributions, bug reports, and pull requests are welcome! Please read our [CONT
 
 ## 📄 License
 
-This project is open-source and licensed under the **[MIT License](./LICENSE)**.  
+This project is open-source and licensed under the **[MIT License](./LICENSE)**.
 Free for personal and commercial software distribution.

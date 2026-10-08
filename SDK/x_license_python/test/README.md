@@ -7,16 +7,20 @@ This directory contains `app.py`, an interactive test application built using Py
 ## 🚀 How to Run
 
 ### 1. Requirements
+
 - Python 3.8 or higher.
 - `tkinter` (installed by default on Windows & macOS. On Ubuntu/Debian: `sudo apt-get install python3-tk`).
 - No mandatory third-party pip dependencies required! Works out of the box using standard library Python.
 
 ### 2. Add Configuration (Auto-Discovery)
+
 1. In the Web Admin Dashboard, go to **Applications** and click **Download Client Config** for your app (or create an application).
 2. Place the downloaded `<app_name>_vcon_config.json` (or `vcon_config.json`) in this `test/` folder or the parent SDK directory.
-3. If no config file is found, you can enter the Server URL and App Scope directly in the GUI or click **"Browse Config File"**.
+3. Confirm the file contains the trusted `public_key_pem` from the Admin Panel config. The diagnostic tool refuses to adopt a key from the server handshake.
+4. If no config file is found, you can enter the Server URL and App Scope directly in the GUI or click **"Browse Config File"**, but a preconfigured trusted public key is still required for key verification and license validation.
 
 ### 3. Launch the GUI
+
 ```bash
 # From this directory:
 python app.py
@@ -26,7 +30,9 @@ python SDK/x_license_python/test/app.py
 ```
 
 ### 4. Running in Headless / Terminal Mode
+
 If you are on a remote server without a graphical display (or wish to run in terminal):
+
 ```bash
 python app.py --cli
 ```
@@ -40,7 +46,7 @@ python app.py --cli
    - One-click **Copy HWID** button.
 
 2. **Complete SDK Login System:**
-   - **Interactive Login:** Enter your license key (and optional PIN) to activate.
+   - **Interactive Login:** Enter your license key to activate. PIN is only for web-panel license control.
    - **Auto-Login:** Automatically recovers and validates saved sessions on startup.
    - **Heartbeat Ping:** Test on-demand pinging and background thread health.
    - **Logout & Unbind:** Releases machine slot on the server immediately so another machine can use it.
@@ -51,7 +57,7 @@ python app.py --cli
      - Stage 2: Hardware HWID Determinism
      - Stage 3: Configuration Discovery & Key Format
      - Stage 4: Backend Connectivity & Latency Measurement
-     - Stage 5: RSA-2048 Public Key Handshake
+   - Stage 5: Server Public Key Match Against Preconfigured Pin
      - Stage 6: Public Site Settings API Check
      - Stage 7: Security Boundary (Rejection of invalid fake keys)
      - Stage 8: Live License Validation Protocol
