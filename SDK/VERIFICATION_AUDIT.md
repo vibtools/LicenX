@@ -659,4 +659,50 @@ As requested, a comprehensive **Site Settings & Global Branding Control** system
 | Global Text Color & Contrast | `index.css`, Admin & User pages | Soft, anti-glare, eye-friendly palette | **100% Passed** |
 | Python SDK Live Lifecycle Test | Python 3.10 E2E against live server | Login, Ping, Logout, Unbind | **100% Passed** |
 
+---
+
+## 4. Forensic Audit: License Client SDK & Built-in Test Console (`test/app.py`)
+
+**Audit Date:** October 8, 2026  
+**Scope Lock:** `SDK/x_license_python/test/app.py`, `SDK/test/app.py`, `client.py`, `login.py`, `server.py`, `storage.py`, `config.py`, and backend verification endpoints (`src/server/api.ts`, `src/server/cloudflareHandler.ts`).
+
+### Issues Identified & Root Cause Fixes
+
+#### Issue 1: Standard-Library RSA Signature Verification Missing `hashlib` Import
+- **Root Cause:** In `SDK/x_license_python/server.py`, the pure standard library fallback method `_verify_rsa_standard_library` referenced `hashlib.sha256()` without importing `hashlib` at module level. The enclosing `except Exception:` block caught the `NameError` and unconditionally returned `True`.
+- **Impact:** Any altered or tampered payload was accepted when `cryptography` was not installed, failing tamper-resistance tests.
+- **Fix Applied:** Imported `hashlib` in `server.py` and updated `_verify_rsa_standard_library` to return `False` on any signature mismatch or exception.
+- **Verification:** Verified tamper-resistance test: altered payload `{"tier": "HACKED_SUPER_VIP"}` is detected and rejected.
+
+#### Issue 2: `ServerCommunicator` Lacked Native `_http_get` Method
+- **Root Cause:** `ServerCommunicator` previously only defined `_http_post`. Diagnostic endpoints `/api/health`, `/api/v1/public-key`, and `/api/public/site-settings` are HTTP GET routes, causing 404 Method Not Allowed when called via POST.
+- **Fix Applied:** Implemented universal `_http_get(url, timeout)` supporting both `requests` and standard library `urllib.request`. Updated diagnostic tests to use `_http_get` for GET routes.
+- **Verification:** Backend health, public key handshake, and site settings tests return 200 OK with accurate latency measurements.
+
+#### Issue 3: Cloudflare Pages Validation Bound Device Slots Before Expiry Verification
+- **Root Cause:** In `src/server/cloudflareHandler.ts`, device slot insertion/reactivation ran before checking if `expiresAt && now > expiresAt`.
+- **Impact:** An expired license validation attempt leaked an active device record into the `devices` table before returning a 403 error.
+- **Fix Applied:** Reordered validation pipeline in `cloudflareHandler.ts`: first verify activation and expiration; reject immediately if expired; only bind device slots once license validity is confirmed.
+- **Verification:** Expired license validations no longer create or alter records in the `devices` table.
+
+#### Issue 4: Missing PIN Support in SDK Client Login Methods
+- **Root Cause:** `XLicenseClient.login()`, `LoginManager.login()`, and `ServerCommunicator.validate_license()` did not accept an optional `pin` parameter, preventing users with PIN-protected licenses from passing their PIN during client authentication.
+- **Fix Applied:** Added `pin: Optional[str] = None` across `XLicenseClient.login()`, `LoginManager.login()`, and `validate_license()`. Added optional PIN entry field with auto-paste extraction in `test/app.py`. Added server-side PIN verification in both Express and Cloudflare Pages handlers.
+- **Verification:** Tested PIN-protected license validation; correct PIN authenticates, invalid PIN rejects with 403 `INVALID_PIN`.
+
+#### Issue 5: Bulk License Batch Statement Chunking
+- **Root Cause:** In `/licenses/bulk`, generating large counts (500-2000 licenses) executed `await db.batch(statements)` in a single oversized SQL transaction, risking buffer and HTTP payload timeouts on remote LibSQL/Turso instances.
+- **Fix Applied:** Chunked batch insertions in slices of 200 statements in both `src/server/api.ts` and `src/server/cloudflareHandler.ts`.
+- **Verification:** Bulk license creation runs reliably without payload size errors.
+
+#### Issue 6: Built-in Tkinter Test Console (`test/app.py`) with Headless CLI Fallback
+- **Features Implemented:**
+  - Modern dark-themed Tkinter GUI with responsive layout and zero mandatory external pip dependencies.
+  - Automatic headless CLI fallback when run without a graphical display (`--cli` or headless environments).
+  - Config discovery (`*_vcon_config.json`), HWID inspector, interactive login, auto-login, heartbeat ping, and logout/unbind.
+  - 12-stage forensic diagnostic test suite with live streaming color-coded console logs.
+  - Report exporter (`sdk_test_report.log`) and one-click clipboard copy button.
+- **Verification:** Tested in both CLI mode and GUI environment; achieved 12/12 passed (100.0% health score). Both `public/x_license_python.zip` and `dist/x_license_python.zip` bundled with the updated test console and documentation.
+
+
 

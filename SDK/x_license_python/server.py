@@ -8,6 +8,7 @@ import time
 import json
 import base64
 import socket
+import hashlib
 from typing import Dict, Any, Tuple, Optional
 from .config import SDKConfig
 
@@ -58,7 +59,7 @@ class ServerCommunicator:
             der = base64.b64decode(raw_b64)
             idx = der.find(b"\x02\x82")
             if idx == -1:
-                return True
+                return False
             mod_len = (der[idx + 2] << 8) | der[idx + 3]
             mod_bytes = der[idx + 4 : idx + 4 + mod_len].lstrip(b"\x00")
             n = int.from_bytes(mod_bytes, "big")
@@ -76,7 +77,7 @@ class ServerCommunicator:
             expected_suffix = sha256_prefix + expected_hash
             return dec_bytes.endswith(expected_suffix) and dec_bytes.startswith(b"\x00\x01")
         except Exception:
-            return True
+            return False
 
     def verify_signature(self, payload: Dict[str, Any], signature_b64: str) -> bool:
         """
@@ -186,11 +187,73 @@ class ServerCommunicator:
         except Exception as e:
             return 500, {"error": str(e), "code": "UNKNOWN_ERROR"}
 
+    def _http_get(self, url: str, timeout: int) -> Tuple[int, Dict[str, Any]]:
+        """
+        Universal HTTP GET supporting requests and native urllib fallback.
+        Returns (status_code, response_json_dict).
+        """
+        if HAS_REQUESTS:
+            try:
+                resp = requests.get(
+                    url,
+                    timeout=timeout,
+                    headers={
+                        "User-Agent": f"VCON-Python-SDK/{self.config.app_name}",
+                    },
+                )
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"error": resp.text, "code": "INVALID_RESPONSE"}
+                return resp.status_code, data
+            except requests.exceptions.SSLError as e:
+                return 495, {"error": f"SSL Handshake failed: {e}", "code": "SSL_ERROR"}
+            except requests.exceptions.ConnectionError as e:
+                return 503, {"error": f"Cannot connect to license server: {e}", "code": "SERVER_UNREACHABLE"}
+            except requests.exceptions.Timeout:
+                return 408, {"error": "Connection to license server timed out", "code": "TIMEOUT"}
+            except Exception as e:
+                return 500, {"error": str(e), "code": "REQUEST_ERROR"}
+
+        # Native Python standard library fallback
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": f"VCON-Python-SDK/{self.config.app_name}",
+            },
+            method="GET",
+        )
+        ctx = ssl.create_default_context()
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as response:
+                status_code = response.getcode()
+                raw_body = response.read().decode("utf-8")
+                try:
+                    data = json.loads(raw_body)
+                except Exception:
+                    data = {"error": raw_body, "code": "INVALID_RESPONSE"}
+                return status_code, data
+        except urllib.error.HTTPError as e:
+            status_code = e.code
+            raw_body = e.read().decode("utf-8")
+            try:
+                data = json.loads(raw_body)
+            except Exception:
+                data = {"error": raw_body, "code": "HTTP_ERROR"}
+            return status_code, data
+        except urllib.error.URLError as e:
+            return 503, {"error": f"Cannot connect to license server: {e.reason}", "code": "SERVER_UNREACHABLE"}
+        except socket.timeout:
+            return 408, {"error": "Connection to license server timed out", "code": "TIMEOUT"}
+        except Exception as e:
+            return 500, {"error": str(e), "code": "UNKNOWN_ERROR"}
+
     def validate_license(
         self,
         license_key: str,
         hwid: str,
         telemetry: Dict[str, Any],
+        pin: Optional[str] = None,
     ) -> Tuple[bool, int, Dict[str, Any]]:
         """
         Calls /api/v1/license/validate endpoint.
@@ -207,6 +270,8 @@ class ServerCommunicator:
             "client_time": int(time.time() * 1000),
             "telemetry": telemetry,
         }
+        if pin and str(pin).strip():
+            body["pin"] = str(pin).strip()
 
         status_code, data = self._http_post(url, body, self.config.request_timeout_seconds)
 

@@ -736,8 +736,10 @@ apiRouter.post('/licenses/bulk', requireAdminAuth, async (req: Request, res: Res
       });
     }
 
-    // Execute in batch
-    await db.batch(statements);
+    // Execute in chunked batches (200 statements per chunk) for safe, high-speed execution
+    for (let i = 0; i < statements.length; i += 200) {
+      await db.batch(statements.slice(i, i + 200));
+    }
 
     // Prepare CSV data
     let csvContent = 'key,pin,tier,app_id,device_limit,validity_type,validity_value,created_at,notes\n';
@@ -1207,6 +1209,7 @@ apiRouter.post('/v1/license/validate', async (req: Request, res: Response) => {
       app_name, // can be app_slug (e.g. "dark_tool_pro") or app_id
       app_version = '1.0.0',
       client_time,
+      pin,
     } = req.body;
 
     if (!license_key || !hwid) {
@@ -1343,6 +1346,17 @@ apiRouter.post('/v1/license/validate', async (req: Request, res: Response) => {
         args: ['log_' + crypto.randomBytes(6).toString('hex'), license_key, matchedApp?.app_slug || null, hwid, ip, now],
       });
       res.status(403).json({ valid: false, code: 'LICENSE_SUSPENDED', message: 'License temporarily suspended' });
+      return;
+    }
+
+    // Optional PIN security check
+    if (license.pin && pin && pin.toString().trim() !== (license.pin as string).trim()) {
+      await db.execute({
+        sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+              VALUES (?, ?, ?, ?, ?, 'reject', 403, 'Invalid 4-digit PIN', ?)`,
+        args: ['log_' + crypto.randomBytes(6).toString('hex'), license_key, matchedApp?.app_slug || null, hwid, ip, now],
+      });
+      res.status(403).json({ valid: false, code: 'INVALID_PIN', message: 'Invalid 4-digit PIN for this license' });
       return;
     }
 

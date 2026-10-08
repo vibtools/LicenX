@@ -763,8 +763,10 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         });
       }
 
-      // Execute in high-performance single batch transaction
-      await db.batch(statements);
+      // Execute in chunked batches (200 statements per chunk) for safe, high-speed execution
+      for (let i = 0; i < statements.length; i += 200) {
+        await db.batch(statements.slice(i, i + 200));
+      }
 
       let r2UploadResult: any = null;
       if (backupToR2) {
@@ -1149,7 +1151,7 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
     }
 
     if (normalizedPath === '/v1/license/validate' && method === 'POST') {
-      const { license_key, hwid, app_name, device_name = 'Unknown', os_info = 'Generic-OS', client_version, nonce } = body;
+      const { license_key, hwid, app_name, device_name = 'Unknown', os_info = 'Generic-OS', client_version, nonce, pin } = body;
       if (!license_key || !hwid) return errorResponse('Missing license_key or hwid');
 
       const cleanKey = license_key.trim().toUpperCase();
@@ -1283,7 +1285,48 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
         }, 403);
       }
 
-      // 6. Check device binding and active counts
+      // Optional PIN security check
+      if (lic.pin && pin && pin.toString().trim() !== (lic.pin as string).trim()) {
+        await db.execute({
+          sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                VALUES (?, ?, ?, ?, ?, 'reject', 403, 'Invalid 4-digit PIN', ?)`,
+          args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+        });
+        return jsonResponse({ valid: false, code: 'INVALID_PIN', message: 'Invalid 4-digit PIN for this license' }, 403);
+      }
+
+      // 6. Activate license if first activation & verify expiration
+      let activatedAt = lic.activated_at ? Number(lic.activated_at) : null;
+      let expiresAt = lic.expires_at ? Number(lic.expires_at) : null;
+      if (!activatedAt) {
+        activatedAt = now;
+        const validityType = lic.validity_type as string;
+        const validityValue = Number(lic.validity_value);
+
+        if (validityType === 'hourly' && validityValue > 0) {
+          expiresAt = now + validityValue * 3600 * 1000;
+        } else if (validityType === 'daily' && validityValue > 0) {
+          expiresAt = now + validityValue * 86400 * 1000;
+        }
+
+        await db.execute({
+          sql: 'UPDATE licenses SET activated_at = ?, expires_at = ? WHERE id = ?',
+          args: [activatedAt, expiresAt, lic.id as string],
+        });
+      }
+
+      // Check expiry BEFORE device binding
+      if (expiresAt && now > expiresAt) {
+        await db.execute({ sql: "UPDATE licenses SET status = 'expired' WHERE id = ?", args: [lic.id as string] });
+        await db.execute({
+          sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
+                VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License expired', ?)`,
+          args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
+        });
+        return jsonResponse({ valid: false, code: 'LICENSE_EXPIRED', message: 'License has expired' }, 403);
+      }
+
+      // 7. Check device binding and active counts
       const devRes = await db.execute({
         sql: 'SELECT * FROM devices WHERE license_id = ? AND hwid = ? LIMIT 1',
         args: [lic.id as string, cleanHwid],
@@ -1344,37 +1387,6 @@ export async function handleCloudflareApi(request: Request, env: any): Promise<R
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
           args: [devId, lic.id as string, cleanHwid, device_name, os_info, ip, now, now],
         });
-      }
-
-      // 7. Activate license if first activation
-      let activatedAt = lic.activated_at ? Number(lic.activated_at) : null;
-      let expiresAt = lic.expires_at ? Number(lic.expires_at) : null;
-      if (!activatedAt) {
-        activatedAt = now;
-        const validityType = lic.validity_type as string;
-        const validityValue = Number(lic.validity_value);
-
-        if (validityType === 'hourly' && validityValue > 0) {
-          expiresAt = now + validityValue * 3600 * 1000;
-        } else if (validityType === 'daily' && validityValue > 0) {
-          expiresAt = now + validityValue * 86400 * 1000;
-        }
-
-        await db.execute({
-          sql: 'UPDATE licenses SET activated_at = ?, expires_at = ? WHERE id = ?',
-          args: [activatedAt, expiresAt, lic.id as string],
-        });
-      }
-
-      // 8. Check expiry
-      if (expiresAt && now > expiresAt) {
-        await db.execute({ sql: "UPDATE licenses SET status = 'expired' WHERE id = ?", args: [lic.id as string] });
-        await db.execute({
-          sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
-                VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License expired', ?)`,
-          args: ['log_' + crypto.randomBytes(6).toString('hex'), cleanKey, matchedApp?.app_slug || null, cleanHwid, ip, now],
-        });
-        return jsonResponse({ valid: false, code: 'LICENSE_EXPIRED', message: 'License has expired' }, 403);
       }
 
       // 9. Sign payload with server private key
