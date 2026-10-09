@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { X, Laptop, RotateCcw, Loader2 } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { License, Device } from '../types';
+import { TablePagination } from './TablePagination';
 
 interface ManageDevicesModalProps {
   license: License;
@@ -19,6 +20,10 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
   const fetchDevices = async () => {
     try {
       setLoading(true);
@@ -33,8 +38,16 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
   };
 
   useEffect(() => {
+    setCurrentPage(1);
     fetchDevices();
   }, [license.id]);
+
+  const totalPages = Math.max(1, Math.ceil(devices.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const paginatedDevices = useMemo(() => {
+    const start = (safeCurrentPage - 1) * pageSize;
+    return devices.slice(start, start + pageSize);
+  }, [devices, safeCurrentPage, pageSize]);
 
   const handleUnbind = async (deviceId: string) => {
     if (!confirm('Unbind this hardware device from license?')) return;
@@ -115,68 +128,81 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
             </div>
           ) : (
             <div className="border border-slate-800/80 rounded overflow-hidden">
-              <table className="w-full text-left font-mono text-xs">
-                <thead className="bg-slate-900/60 border-b border-slate-800/80 text-slate-400 text-[10px] uppercase">
-                  <tr>
-                    <th className="py-2 px-2.5">HWID Hash</th>
-                    <th className="py-2 px-2.5">Device / OS</th>
-                    <th className="py-2 px-2.5">Status</th>
-                    <th className="py-2 px-2.5">IP Address</th>
-                    <th className="py-2 px-2.5">Last Ping</th>
-                    <th className="py-2 px-2.5 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/40 text-slate-300 text-[11px]">
-                  {devices.map((d) => {
-                    const isActive = d.status === 'active';
-                    return (
-                      <tr key={d.id} className="hover:bg-slate-900/30 transition-colors">
-                        <td className="py-2 px-2.5">
-                          <span className="font-medium text-slate-300 select-all" title={d.hwid}>
-                            {d.hwid.slice(0, 16)}...
-                          </span>
-                        </td>
-                        <td className="py-2 px-2.5">
-                          <div className="font-medium text-slate-300">{d.device_name || 'PC Client'}</div>
-                          <div className="text-[10px] text-slate-500">{d.os_info || 'Windows/Linux'}</div>
-                        </td>
-                        <td className="py-2 px-2.5">
-                          <span
-                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase ${
-                              isActive
-                                ? 'bg-emerald-950/30 text-emerald-400/90 border border-emerald-900/40'
-                                : 'bg-slate-900 text-slate-400 border border-slate-800'
-                            }`}
-                          >
+              <div className="overflow-x-auto">
+                <table className="w-full text-left font-mono text-xs">
+                  <thead className="bg-slate-900/60 border-b border-slate-800/80 text-slate-400 text-[10px] uppercase">
+                    <tr>
+                      <th className="py-2 px-2.5">HWID Hash</th>
+                      <th className="py-2 px-2.5">Device / OS</th>
+                      <th className="py-2 px-2.5">Status</th>
+                      <th className="py-2 px-2.5">IP Address</th>
+                      <th className="py-2 px-2.5">Last Ping</th>
+                      <th className="py-2 px-2.5 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/40 text-slate-300 text-[11px]">
+                    {paginatedDevices.map((d) => {
+                      const isActive = d.status === 'active';
+                      return (
+                        <tr key={d.id} className="hover:bg-slate-900/30 transition-colors">
+                          <td className="py-2 px-2.5">
+                            <span className="font-medium text-slate-300 select-all" title={d.hwid}>
+                              {d.hwid.slice(0, 16)}...
+                            </span>
+                          </td>
+                          <td className="py-2 px-2.5">
+                            <div className="font-medium text-slate-300">{d.device_name || 'PC Client'}</div>
+                            <div className="text-[10px] text-slate-500">{d.os_info || 'Windows/Linux'}</div>
+                          </td>
+                          <td className="py-2 px-2.5">
                             <span
-                              className={`w-1 h-1 rounded-full ${
-                                isActive ? 'bg-emerald-500/80' : 'bg-slate-500'
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase ${
+                                isActive
+                                  ? 'bg-emerald-950/30 text-emerald-400/90 border border-emerald-900/40'
+                                  : 'bg-slate-900 text-slate-400 border border-slate-800'
                               }`}
-                            />
-                            {isActive ? 'Active Lock' : 'Logged Out'}
-                          </span>
-                        </td>
-                        <td className="py-2 px-2.5 text-slate-400">{d.ip_address}</td>
-                        <td className="py-2 px-2.5 text-slate-400">{formatTime(d.last_ping_at)}</td>
-                        <td className="py-2 px-2.5 text-right">
-                          <button
-                            onClick={() => handleUnbind(d.id)}
-                            disabled={actionLoading}
-                            className={`px-2 py-1 text-[10px] rounded border transition-colors ${
-                              isActive
-                                ? 'bg-slate-900 hover:bg-rose-950/40 text-rose-400 border-slate-800 hover:border-rose-900/50'
-                                : 'bg-slate-900 hover:bg-slate-850 text-slate-400 border-slate-800'
-                            }`}
-                            title={isActive ? 'Unbind active hardware slot' : 'Remove inactive record'}
-                          >
-                            {isActive ? 'Unbind HWID' : 'Remove'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                            >
+                              <span
+                                className={`w-1 h-1 rounded-full ${
+                                  isActive ? 'bg-emerald-500/80' : 'bg-slate-500'
+                                }`}
+                              />
+                              {isActive ? 'Active Lock' : 'Logged Out'}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2.5 text-slate-400">{d.ip_address}</td>
+                          <td className="py-2 px-2.5 text-slate-400">{formatTime(d.last_ping_at)}</td>
+                          <td className="py-2 px-2.5 text-right">
+                            <button
+                              onClick={() => handleUnbind(d.id)}
+                              disabled={actionLoading}
+                              className={`px-2 py-1 text-[10px] rounded border transition-colors ${
+                                isActive
+                                  ? 'bg-slate-900 hover:bg-rose-950/40 text-rose-400 border-slate-800 hover:border-rose-900/50'
+                                  : 'bg-slate-900 hover:bg-slate-850 text-slate-400 border-slate-800'
+                              }`}
+                              title={isActive ? 'Unbind active hardware slot' : 'Remove inactive record'}
+                            >
+                              {isActive ? 'Unbind HWID' : 'Remove'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <TablePagination
+                currentPage={safeCurrentPage}
+                totalItems={devices.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={(newSize) => {
+                  setPageSize(newSize);
+                  setCurrentPage(1);
+                }}
+                itemLabel="devices"
+              />
             </div>
           )}
 

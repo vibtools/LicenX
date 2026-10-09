@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   AppWindow,
   Search,
@@ -14,6 +14,7 @@ import { api } from '../services/apiClient';
 import { AppItem } from '../types';
 import { CreateAppModal } from './CreateAppModal';
 import { EditAppModal } from './EditAppModal';
+import { TablePagination } from './TablePagination';
 
 export const AppsTab: React.FC = () => {
   const [apps, setApps] = useState<AppItem[]>([]);
@@ -22,6 +23,10 @@ export const AppsTab: React.FC = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -58,19 +63,33 @@ export const AppsTab: React.FC = () => {
   };
 
   useEffect(() => {
+    setCurrentPage(1);
     loadApps();
   }, [statusFilter]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setCurrentPage(1);
     loadApps();
   };
 
+  const totalPages = Math.max(1, Math.ceil(apps.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const paginatedApps = useMemo(() => {
+    const start = (safeCurrentPage - 1) * pageSize;
+    return apps.slice(start, start + pageSize);
+  }, [apps, safeCurrentPage, pageSize]);
+
+  const isAllPageSelected = paginatedApps.length > 0 && paginatedApps.every((a) => selectedIds.includes(a.id));
+
   const toggleSelectAll = () => {
-    if (selectedIds.length === apps.length) {
-      setSelectedIds([]);
+    if (isAllPageSelected) {
+      const pageIds = new Set(paginatedApps.map((a) => a.id));
+      setSelectedIds(selectedIds.filter((id) => !pageIds.has(id)));
     } else {
-      setSelectedIds(apps.map((a) => a.id));
+      const newSelected = new Set(selectedIds);
+      paginatedApps.forEach((a) => newSelected.add(a.id));
+      setSelectedIds(Array.from(newSelected));
     }
   };
 
@@ -214,36 +233,37 @@ export const AppsTab: React.FC = () => {
       )}
 
       {/* Main Apps Table */}
-      <div className="border border-slate-800/80 rounded bg-slate-950/50 overflow-x-auto">
-        <table className="w-full text-left font-sans text-xs">
-          <thead className="bg-slate-900/60 border-b border-slate-800/80 text-xs font-semibold tracking-wider text-slate-400 uppercase font-sans">
-            <tr>
-              <th className="py-2.5 px-3 w-6">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.length > 0 && selectedIds.length === apps.length}
-                  onChange={toggleSelectAll}
-                  className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0"
-                />
-              </th>
-              <th className="py-2.5 px-3">App Identifier (Slug)</th>
-              <th className="py-2.5 px-3">Display Name</th>
-              <th className="py-2.5 px-3">Min Version</th>
-              <th className="py-2.5 px-3">Status</th>
-              <th className="py-2.5 px-3">Scoped Licenses</th>
-              <th className="py-2.5 px-3">Notes</th>
-              <th className="py-2.5 px-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/40 text-slate-300 text-xs">
-            {apps.length === 0 ? (
+      <div className="border border-slate-800/80 rounded bg-slate-950/50 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left font-sans text-xs">
+            <thead className="bg-slate-900/60 border-b border-slate-800/80 text-xs font-semibold tracking-wider text-slate-400 uppercase font-sans">
               <tr>
-                <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
-                  {loading ? 'Loading applications...' : 'No applications found.'}
-                </td>
+                <th className="py-2.5 px-3 w-6">
+                  <input
+                    type="checkbox"
+                    checked={isAllPageSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0"
+                  />
+                </th>
+                <th className="py-2.5 px-3">App Identifier (Slug)</th>
+                <th className="py-2.5 px-3">Display Name</th>
+                <th className="py-2.5 px-3">Min Version</th>
+                <th className="py-2.5 px-3">Status</th>
+                <th className="py-2.5 px-3">Scoped Licenses</th>
+                <th className="py-2.5 px-3">Notes</th>
+                <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
-            ) : (
-              apps.map((app) => (
+            </thead>
+            <tbody className="divide-y divide-slate-800/40 text-slate-300 text-xs">
+              {apps.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
+                    {loading ? 'Loading applications...' : 'No applications found.'}
+                  </td>
+                </tr>
+              ) : (
+                paginatedApps.map((app) => (
                 <tr key={app.id} className="hover:bg-slate-900/30 transition-colors">
                   <td className="py-2 px-3">
                     <input
@@ -329,6 +349,18 @@ export const AppsTab: React.FC = () => {
           </tbody>
         </table>
       </div>
+      <TablePagination
+        currentPage={safeCurrentPage}
+        totalItems={apps.length}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={(newSize) => {
+          setPageSize(newSize);
+          setCurrentPage(1);
+        }}
+        itemLabel="applications"
+      />
+    </div>
 
       {/* Modals */}
       {showCreateModal && (

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Search,
   Plus,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { License, AppItem } from '../types';
+import { TablePagination } from './TablePagination';
 
 interface LicensesTabProps {
   onOpenCreate: () => void;
@@ -42,6 +43,10 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   const [appFilter, setAppFilter] = useState('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // Settings dropdown state per license
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -94,11 +99,13 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   };
 
   useEffect(() => {
+    setCurrentPage(1);
     loadLicenses();
   }, [statusFilter, tierFilter, appFilter]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setCurrentPage(1);
     loadLicenses();
   };
 
@@ -124,11 +131,24 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
     return key;
   };
 
+  // Pagination slicing & calculations
+  const totalPages = Math.max(1, Math.ceil(licenses.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const paginatedLicenses = useMemo(() => {
+    const start = (safeCurrentPage - 1) * pageSize;
+    return licenses.slice(start, start + pageSize);
+  }, [licenses, safeCurrentPage, pageSize]);
+
+  const isAllPageSelected = paginatedLicenses.length > 0 && paginatedLicenses.every((l) => selectedIds.includes(l.id));
+
   const toggleSelectAll = () => {
-    if (selectedIds.length === licenses.length) {
-      setSelectedIds([]);
+    if (isAllPageSelected) {
+      const pageIds = new Set(paginatedLicenses.map((l) => l.id));
+      setSelectedIds(selectedIds.filter((id) => !pageIds.has(id)));
     } else {
-      setSelectedIds(licenses.map((l) => l.id));
+      const newSelected = new Set(selectedIds);
+      paginatedLicenses.forEach((l) => newSelected.add(l.id));
+      setSelectedIds(Array.from(newSelected));
     }
   };
 
@@ -422,36 +442,37 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
       )}
 
       {/* Main License Table - Clean & Compact */}
-      <div className="border border-slate-800/80 rounded bg-slate-950/50 overflow-x-auto min-h-[320px]">
-        <table className="w-full text-left font-sans text-xs">
-          <thead className="bg-slate-900/60 border-b border-slate-800/80 text-xs font-semibold tracking-wider text-slate-400 uppercase font-sans">
-            <tr>
-              <th className="py-2.5 px-3 w-6">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.length > 0 && selectedIds.length === licenses.length}
-                  onChange={toggleSelectAll}
-                  className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0"
-                />
-              </th>
-              <th className="py-2.5 px-3">License Key</th>
-              <th className="py-2.5 px-3">App Scope</th>
-              <th className="py-2.5 px-3">Status</th>
-              <th className="py-2.5 px-3">Tier</th>
-              <th className="py-2.5 px-3">HWID Lock</th>
-              <th className="py-2.5 px-3">Validity</th>
-              <th className="py-2.5 px-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/40 text-slate-300 text-xs">
-            {licenses.length === 0 ? (
+      <div className="border border-slate-800/80 rounded bg-slate-950/50 overflow-hidden min-h-[320px]">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left font-sans text-xs">
+            <thead className="bg-slate-900/60 border-b border-slate-800/80 text-xs font-semibold tracking-wider text-slate-400 uppercase font-sans">
               <tr>
-                <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
-                  {loading ? 'Loading licenses...' : 'No licenses matching filter criteria.'}
-                </td>
+                <th className="py-2.5 px-3 w-6">
+                  <input
+                    type="checkbox"
+                    checked={isAllPageSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0"
+                  />
+                </th>
+                <th className="py-2.5 px-3">License Key</th>
+                <th className="py-2.5 px-3">App Scope</th>
+                <th className="py-2.5 px-3">Status</th>
+                <th className="py-2.5 px-3">Tier</th>
+                <th className="py-2.5 px-3">HWID Lock</th>
+                <th className="py-2.5 px-3">Validity</th>
+                <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
-            ) : (
-              licenses.map((lic) => {
+            </thead>
+            <tbody className="divide-y divide-slate-800/40 text-slate-300 text-xs">
+              {licenses.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
+                    {loading ? 'Loading licenses...' : 'No licenses matching filter criteria.'}
+                  </td>
+                </tr>
+              ) : (
+                paginatedLicenses.map((lic) => {
                 const boundCount = lic.bound_devices_count ?? 0;
                 const limit = lic.device_limit;
                 const isFull = limit !== -1 && boundCount >= limit;
@@ -672,6 +693,18 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
           </tbody>
         </table>
       </div>
+      <TablePagination
+        currentPage={safeCurrentPage}
+        totalItems={licenses.length}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={(newSize) => {
+          setPageSize(newSize);
+          setCurrentPage(1);
+        }}
+        itemLabel="licenses"
+      />
+    </div>
 
       {/* Edit License Modal */}
       {editingLicense && (
