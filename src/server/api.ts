@@ -2322,8 +2322,12 @@ apiRouter.post(
         req.body;
       const db = getDbClient();
 
-      let finalSecretKey = secretAccessKey;
-      if (secretAccessKey === "••••••••••••••••" || !secretAccessKey) {
+      let finalSecretKey = (secretAccessKey || "").trim();
+      if (
+        !finalSecretKey ||
+        finalSecretKey === "••••••••••••••••" ||
+        finalSecretKey.includes("•")
+      ) {
         const existing = await db.execute(
           "SELECT r2_config_json FROM admin_config LIMIT 1",
         );
@@ -2332,11 +2336,21 @@ apiRouter.post(
             const parsed = JSON.parse(
               existing.rows[0].r2_config_json as string,
             );
-            finalSecretKey = parsed.secretAccessKey;
+            if (parsed.secretAccessKey && !parsed.secretAccessKey.includes("•")) {
+              finalSecretKey = parsed.secretAccessKey.trim();
+            }
           } catch {
             // ignore
           }
         }
+      }
+
+      if (!finalSecretKey || finalSecretKey.includes("•")) {
+        res.status(400).json({
+          error:
+            "Please enter your actual Cloudflare R2 Secret Access Key (not the masked placeholder).",
+        });
+        return;
       }
 
       const newR2Config: R2Config = {
@@ -2369,8 +2383,12 @@ apiRouter.post(
       const { accountId, accessKeyId, secretAccessKey, bucketName } = req.body;
       const db = getDbClient();
 
-      let finalSecretKey = secretAccessKey;
-      if (secretAccessKey === "••••••••••••••••" || !secretAccessKey) {
+      let finalSecretKey = (secretAccessKey || "").trim();
+      if (
+        !finalSecretKey ||
+        finalSecretKey === "••••••••••••••••" ||
+        finalSecretKey.includes("•")
+      ) {
         const existing = await db.execute(
           "SELECT r2_config_json FROM admin_config LIMIT 1",
         );
@@ -2379,7 +2397,9 @@ apiRouter.post(
             const parsed = JSON.parse(
               existing.rows[0].r2_config_json as string,
             );
-            finalSecretKey = parsed.secretAccessKey;
+            if (parsed.secretAccessKey && !parsed.secretAccessKey.includes("•")) {
+              finalSecretKey = parsed.secretAccessKey.trim();
+            }
           } catch {
             // ignore
           }

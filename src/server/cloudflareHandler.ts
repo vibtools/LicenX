@@ -2105,15 +2105,60 @@ export async function handleCloudflareApi(
       if (!auth.authorized)
         return errorResponse(auth.error || "Unauthorized", 401);
 
-      const r2Json = JSON.stringify(body);
+      const {
+        accountId,
+        accessKeyId,
+        secretAccessKey,
+        bucketName,
+        publicUrl,
+      } = body;
+      let finalSecret = (secretAccessKey || "").trim();
+
+      if (
+        !finalSecret ||
+        finalSecret === "••••••••••••••••" ||
+        finalSecret.includes("•")
+      ) {
+        const existing = await db.execute(
+          "SELECT r2_config_json FROM admin_config LIMIT 1",
+        );
+        if (existing.rows.length > 0 && existing.rows[0].r2_config_json) {
+          try {
+            const parsed = JSON.parse(
+              existing.rows[0].r2_config_json as string,
+            );
+            if (parsed.secretAccessKey && !parsed.secretAccessKey.includes("•")) {
+              finalSecret = parsed.secretAccessKey.trim();
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      if (!finalSecret || finalSecret.includes("•")) {
+        return errorResponse(
+          "Please enter your actual Cloudflare R2 Secret Access Key (not the masked placeholder).",
+          400,
+        );
+      }
+
+      const cleanR2Config: R2Config = {
+        accountId: (accountId || "").trim(),
+        accessKeyId: (accessKeyId || "").trim(),
+        secretAccessKey: finalSecret,
+        bucketName: (bucketName || "").trim(),
+        publicUrl: (publicUrl || "").trim(),
+      };
+
       await db.execute({
         sql: "UPDATE admin_config SET r2_config_json = ?, updated_at = ?",
-        args: [r2Json, Date.now()],
+        args: [JSON.stringify(cleanR2Config), Date.now()],
       });
 
       return jsonResponse({
         success: true,
-        message: "R2 configuration updated",
+        message: "R2 configuration saved successfully",
       });
     }
 
@@ -2122,7 +2167,33 @@ export async function handleCloudflareApi(
       if (!auth.authorized)
         return errorResponse(auth.error || "Unauthorized", 401);
 
-      const testRes = await testR2Connection(body as R2Config);
+      const testConfig = { ...(body as R2Config) };
+      let finalSecret = (testConfig.secretAccessKey || "").trim();
+
+      if (
+        !finalSecret ||
+        finalSecret === "••••••••••••••••" ||
+        finalSecret.includes("•")
+      ) {
+        const existing = await db.execute(
+          "SELECT r2_config_json FROM admin_config LIMIT 1",
+        );
+        if (existing.rows.length > 0 && existing.rows[0].r2_config_json) {
+          try {
+            const parsed = JSON.parse(
+              existing.rows[0].r2_config_json as string,
+            );
+            if (parsed.secretAccessKey && !parsed.secretAccessKey.includes("•")) {
+              finalSecret = parsed.secretAccessKey.trim();
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+      testConfig.secretAccessKey = finalSecret;
+
+      const testRes = await testR2Connection(testConfig);
       return jsonResponse(testRes);
     }
 

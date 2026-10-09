@@ -211,6 +211,14 @@ ensureDOMParser();
 export function extractS3ErrorMessage(error: any): string {
   if (!error) return 'Unknown Cloudflare R2 error';
 
+  if (
+    error.Code === 'SignatureDoesNotMatch' ||
+    error.name === 'SignatureDoesNotMatch' ||
+    error.message?.includes('SignatureDoesNotMatch')
+  ) {
+    return 'SignatureDoesNotMatch: The Secret Access Key does not match Cloudflare R2. Please re-enter your actual Secret Access Key in the Storage & DB tab.';
+  }
+
   if (error.Code && error.Message) {
     return `${error.Code}: ${error.Message}`;
   }
@@ -229,6 +237,21 @@ export function extractS3ErrorMessage(error: any): string {
   return error.message || 'Failed to interact with Cloudflare R2';
 }
 
+export function validateR2Config(config: R2Config): { valid: boolean; error?: string } {
+  if (!config.accountId?.trim() || !config.accessKeyId?.trim() || !config.bucketName?.trim()) {
+    return { valid: false, error: 'Missing required R2 credentials (Account ID, Access Key ID, or Bucket Name)' };
+  }
+  const secret = (config.secretAccessKey || '').trim();
+  if (!secret || secret === '••••••••••••••••' || secret.includes('•')) {
+    return {
+      valid: false,
+      error:
+        'Cloudflare R2 Secret Access Key is invalid or set to masked placeholder (••••). Please re-enter your actual Secret Access Key in the Storage & DB tab.',
+    };
+  }
+  return { valid: true };
+}
+
 export function getR2Client(config: R2Config): S3Client {
   ensureDOMParser();
   return new S3Client({
@@ -243,8 +266,9 @@ export function getR2Client(config: R2Config): S3Client {
 
 export async function testR2Connection(config: R2Config): Promise<{ success: boolean; message: string }> {
   try {
-    if (!config.accountId || !config.accessKeyId || !config.secretAccessKey || !config.bucketName) {
-      return { success: false, message: 'Missing required R2 credentials' };
+    const validation = validateR2Config(config);
+    if (!validation.valid) {
+      return { success: false, message: validation.error || 'Invalid R2 credentials' };
     }
 
     ensureDOMParser();
@@ -268,6 +292,11 @@ export async function uploadToR2(
   contentType = 'text/csv'
 ): Promise<{ success: boolean; url?: string; signedUrl?: string; key?: string; error?: string }> {
   try {
+    const validation = validateR2Config(config);
+    if (!validation.valid) {
+      return { success: false, error: validation.error || 'Invalid R2 credentials' };
+    }
+
     ensureDOMParser();
     const client = getR2Client(config);
     const bodyBuffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
@@ -318,6 +347,11 @@ export async function getR2Object(
   key: string
 ): Promise<{ success: boolean; data?: Uint8Array; contentType?: string; error?: string }> {
   try {
+    const validation = validateR2Config(config);
+    if (!validation.valid) {
+      return { success: false, error: validation.error || 'Invalid R2 credentials' };
+    }
+
     ensureDOMParser();
     const client = getR2Client(config);
     const command = new GetObjectCommand({

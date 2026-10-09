@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, before } from 'node:test';
-import { ensureDOMParser, extractS3ErrorMessage } from '../src/server/r2.js';
+import { ensureDOMParser, extractS3ErrorMessage, validateR2Config } from '../src/server/r2.js';
 import { handleCloudflareApi } from '../src/server/cloudflareHandler.js';
 import { getDbClient } from '../src/server/db.js';
 
@@ -94,4 +94,26 @@ test('Cloudflare asset proxy returns 404 when storage is unconfigured', async ()
   assert.equal(res.status, 404);
   const data = await res.json();
   assert.match((data as any).error, /storage not configured/i);
+});
+
+test('SignatureDoesNotMatch provides clear instruction to re-enter secret key', () => {
+  const sigError = {
+    Code: 'SignatureDoesNotMatch',
+    Message: 'The request signature we calculated does not match',
+  };
+  const msg = extractS3ErrorMessage(sigError);
+  assert.match(msg, /SignatureDoesNotMatch/);
+  assert.match(msg, /Storage & DB tab/);
+});
+
+test('validateR2Config rejects placeholder bullets and invalid credentials', () => {
+  const bulletConfig = {
+    accountId: 'acc',
+    accessKeyId: 'key',
+    secretAccessKey: '••••••••••••••••',
+    bucketName: 'bucket',
+  };
+  const res = validateR2Config(bulletConfig);
+  assert.equal(res.valid, false);
+  assert.match(res.error || '', /masked placeholder/i);
 });

@@ -34,6 +34,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   });
   const [r2Saving, setR2Saving] = useState(false);
   const [r2Testing, setR2Testing] = useState(false);
+  const [hasSavedSecret, setHasSavedSecret] = useState(false);
   const [r2StatusMessage, setR2StatusMessage] = useState<{ success: boolean; text: string } | null>(null);
 
   // Backups
@@ -57,10 +58,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         setTursoUrl(sRes.tursoUrl || '');
         setHasTursoEnv(Boolean(sRes.hasTursoEnv));
         if (sRes.r2Config) {
+          setHasSavedSecret(Boolean(sRes.r2Config.secretAccessKey));
           setR2Config({
             accountId: sRes.r2Config.accountId || '',
             accessKeyId: sRes.r2Config.accessKeyId || '',
-            secretAccessKey: sRes.r2Config.secretAccessKey || '',
+            secretAccessKey: '',
             bucketName: sRes.r2Config.bucketName || '',
             publicUrl: sRes.r2Config.publicUrl || '',
           });
@@ -99,6 +101,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     try {
       const res = await api.saveR2Config(r2Config);
       setR2StatusMessage({ success: true, text: res.message || 'Saved successfully' });
+      if (r2Config.secretAccessKey) {
+        setHasSavedSecret(true);
+        setR2Config((prev) => ({ ...prev, secretAccessKey: '' }));
+      }
     } catch (err: any) {
       setR2StatusMessage({ success: false, text: err.message || 'Save failed' });
     } finally {
@@ -219,12 +225,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               />
             </div>
             <div>
-              <label className="text-[10px] text-slate-400 block mb-1">Secret Access Key</label>
+              <label className="text-[10px] text-slate-400 block mb-1">
+                Secret Access Key{' '}
+                {hasSavedSecret && !r2Config.secretAccessKey && (
+                  <span className="text-emerald-400 font-normal ml-1">✓ Saved</span>
+                )}
+              </label>
               <input
                 type="password"
                 value={r2Config.secretAccessKey}
                 onChange={(e) => setR2Config({ ...r2Config, secretAccessKey: e.target.value })}
-                placeholder="••••••••••••••••"
+                placeholder={hasSavedSecret ? "•••••••••••••••• (Leave blank to keep)" : "Enter Secret Access Key"}
                 className="w-full px-2 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none"
               />
             </div>
