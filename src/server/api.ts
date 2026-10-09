@@ -17,7 +17,7 @@ import {
 import { getDbClient, isTursoPlaceholder } from "./db.js";
 import { bindDeviceWithinLimit } from "./deviceBinding.js";
 import { isPublicAccessEnabled } from "./publicAccessSettings.js";
-import { R2Config, testR2Connection, uploadToR2 } from "./r2.js";
+import { R2Config, testR2Connection, uploadToR2, getR2Object } from "./r2.js";
 import {
   clearUserControlPinAttempts,
   getUserControlPinRateLimit,
@@ -2656,3 +2656,63 @@ apiRouter.post(
     }
   },
 );
+
+// Public Asset / S3 Storage Proxy (Permanent Non-Expiring Serving)
+apiRouter.get(
+  ["/public/assets/*", "/storage/file/*"],
+  async (req: Request, res: Response) => {
+    try {
+      const fullPath = req.path;
+      let assetKey = fullPath.replace(
+        /^\/(public\/assets|storage\/file)\//,
+        "",
+      );
+      try {
+        assetKey = decodeURIComponent(assetKey);
+      } catch {
+        // ignore
+      }
+
+      if (
+        !assetKey ||
+        assetKey.includes("..") ||
+        assetKey.startsWith("/") ||
+        assetKey.startsWith("\\")
+      ) {
+        res.status(400).json({ error: "Invalid asset path" });
+        return;
+      }
+
+      const db = getDbClient();
+      const configRes = await db.execute(
+        "SELECT r2_config_json FROM admin_config LIMIT 1",
+      );
+      if (configRes.rows.length === 0 || !configRes.rows[0].r2_config_json) {
+        res.status(404).json({ error: "Cloudflare R2 storage not configured" });
+        return;
+      }
+
+      const r2Config: R2Config = JSON.parse(
+        configRes.rows[0].r2_config_json as string,
+      );
+      const fileRes = await getR2Object(r2Config, assetKey);
+      if (!fileRes.success || !fileRes.data) {
+        res.status(404).json({ error: fileRes.error || "Asset not found" });
+        return;
+      }
+
+      res.setHeader(
+        "Content-Type",
+        fileRes.contentType || "application/octet-stream",
+      );
+      res.setHeader(
+        "Cache-Control",
+        "public, max-age=604800, stale-while-revalidate=86400",
+      );
+      res.send(Buffer.from(fileRes.data));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch asset" });
+    }
+  },
+);
+

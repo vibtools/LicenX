@@ -99,6 +99,11 @@ export const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({
       return;
     }
 
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMessage(`File "${file.name}" exceeds the 5MB size limit.`);
+      return;
+    }
+
     try {
       setUploadingField(field);
       setErrorMessage(null);
@@ -106,7 +111,7 @@ export const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve, reject) => {
         reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
+        reader.onerror = () => reject(new Error('Failed to read image file'));
       });
       reader.readAsDataURL(file);
       const dataBase64 = await base64Promise;
@@ -119,13 +124,15 @@ export const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({
       });
 
       if (uploadRes.success && uploadRes.url) {
-        setSettings({
-          ...settings,
+        setSettings((prev) => ({
+          ...prev,
           [field]: uploadRes.url,
-        });
+        }));
+      } else {
+        throw new Error('Upload returned empty asset URL');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || `Failed to upload file to R2`);
+      setErrorMessage(err.message || 'Failed to upload asset to Cloudflare R2');
     } finally {
       setUploadingField(null);
     }

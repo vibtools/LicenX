@@ -13,7 +13,7 @@ import {
 import { getDbClient, initDatabaseSchema, isTursoPlaceholder } from "./db.js";
 import { bindDeviceWithinLimit } from "./deviceBinding.js";
 import { isPublicAccessEnabled } from "./publicAccessSettings.js";
-import { R2Config, testR2Connection, uploadToR2 } from "./r2.js";
+import { R2Config, testR2Connection, uploadToR2, getR2Object } from "./r2.js";
 import {
   clearUserControlPinAttempts,
   getUserControlPinRateLimit,
@@ -2339,6 +2339,59 @@ export async function handleCloudflareApi(
         url: uploadRes.url || uploadRes.signedUrl,
         signedUrl: uploadRes.signedUrl,
         key,
+      });
+    }
+
+    // -----------------------------------------------------------------
+    // PUBLIC ASSET / S3 STORAGE PROXY (Permanent Non-Expiring Serving)
+    // -----------------------------------------------------------------
+    if (
+      (normalizedPath.startsWith("/public/assets/") ||
+        normalizedPath.startsWith("/storage/file/")) &&
+      method === "GET"
+    ) {
+      let assetKey = normalizedPath.replace(
+        /^\/(public\/assets|storage\/file)\//,
+        "",
+      );
+      try {
+        assetKey = decodeURIComponent(assetKey);
+      } catch {
+        // ignore decoding errors
+      }
+
+      if (
+        !assetKey ||
+        assetKey.includes("..") ||
+        assetKey.startsWith("/") ||
+        assetKey.startsWith("\\")
+      ) {
+        return errorResponse("Invalid asset path", 400);
+      }
+
+      const configRes = await db.execute(
+        "SELECT r2_config_json FROM admin_config LIMIT 1",
+      );
+      if (configRes.rows.length === 0 || !configRes.rows[0].r2_config_json) {
+        return errorResponse("Cloudflare R2 storage not configured", 404);
+      }
+
+      const r2Config: R2Config = JSON.parse(
+        configRes.rows[0].r2_config_json as string,
+      );
+      const fileRes = await getR2Object(r2Config, assetKey);
+      if (!fileRes.success || !fileRes.data) {
+        return errorResponse(fileRes.error || "Asset not found", 404);
+      }
+
+      return new Response(fileRes.data as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": fileRes.contentType || "application/octet-stream",
+          "Cache-Control":
+            "public, max-age=604800, stale-while-revalidate=86400",
+        },
       });
     }
 
