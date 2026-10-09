@@ -199,13 +199,19 @@ export default function App() {
           window.history.pushState({}, '', '/');
           setCurrentPath('/');
         }}
+        siteSettings={siteSettings}
       />
     );
   }
 
   // Root Public URL -> Landing Page
   if (!isAdminRoute) {
-    return <LandingPage />;
+    return (
+      <LandingPage
+        siteSettings={siteSettings}
+        onSettingsUpdated={(newS) => setSiteSettings(newS)}
+      />
+    );
   }
 
   // Admin Route (/vcon) -> Check if system is initialized

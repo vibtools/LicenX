@@ -68,6 +68,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   stats,
   siteSettings,
 }) => {
+  const [logoError, setLogoError] = useState(false);
+
+  useEffect(() => {
+    setLogoError(false);
+  }, [siteSettings?.logoUrl]);
   const navGroups: NavGroup[] = [
     {
       id: 'license-hub',
@@ -202,14 +207,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Brand Header */}
         <div className="h-12 border-b border-slate-800/80 flex items-center justify-between px-3">
           <div className="flex items-center gap-2 overflow-hidden">
-            {siteSettings?.logoUrl ? (
+            {siteSettings?.logoUrl && !logoError ? (
               <img
                 src={siteSettings.logoUrl}
                 alt={siteSettings.siteName || 'Logo'}
                 className="w-6 h-6 shrink-0 rounded object-contain bg-slate-900 border border-slate-800"
-                onError={(e) => {
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
+                onError={() => setLogoError(true)}
               />
             ) : (
               <div className="w-6 h-6 shrink-0 rounded bg-slate-900 border border-slate-700/80 flex items-center justify-center text-indigo-400">

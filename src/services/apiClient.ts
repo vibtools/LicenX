@@ -396,7 +396,7 @@ export const api = {
   getPublicSiteSettings: async (force = false) => {
     const key = 'public_site_settings';
     if (!force) {
-      const cached = getCached<SiteSettings>(key, 60000);
+      const cached = getCached<SiteSettings>(key, 5000);
       if (cached) return cached;
     }
     const data = await request<SiteSettings>('/api/public/site-settings');

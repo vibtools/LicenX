@@ -70,7 +70,12 @@ interface AnalysisData {
   }>;
 }
 
-export const LandingPage: React.FC = () => {
+interface LandingPageProps {
+  siteSettings?: SiteSettings;
+  onSettingsUpdated?: (settings: SiteSettings) => void;
+}
+
+export const LandingPage: React.FC<LandingPageProps> = ({ siteSettings: propSiteSettings }) => {
   // Check License State
   const [checkKey, setCheckKey] = useState('');
   const [checking, setChecking] = useState(false);
@@ -94,6 +99,10 @@ export const LandingPage: React.FC = () => {
   const [copiedLicenseKey, setCopiedLicenseKey] = useState(false);
   const [copiedHwid, setCopiedHwid] = useState<string | null>(null);
 
+  // Logo Error Fallback States
+  const [navLogoError, setNavLogoError] = useState(false);
+  const [heroLogoError, setHeroLogoError] = useState(false);
+
   const handleCopyLicenseKey = (key: string) => {
     navigator.clipboard.writeText(key);
     setCopiedLicenseKey(true);
@@ -106,19 +115,33 @@ export const LandingPage: React.FC = () => {
     setTimeout(() => setCopiedHwid(null), 1500);
   };
 
-  // Site Settings State (Controlled from Admin Site Settings)
-  const [siteSettings, setSiteSettings] = useState<SiteSettings>(DEFAULT_SITE_SETTINGS);
+  // Site Settings State (Prop prioritized, with internal state fallback)
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>(propSiteSettings || DEFAULT_SITE_SETTINGS);
 
   useEffect(() => {
-    api.getPublicSiteSettings().then((res) => {
-      if (res && res.siteName) {
-        setSiteSettings(res);
-      }
-    }).catch(() => {
-      // keep fallback
-    });
-  }, []);
+    if (propSiteSettings) {
+      setSiteSettings(propSiteSettings);
+    }
+  }, [propSiteSettings]);
 
+  useEffect(() => {
+    setNavLogoError(false);
+    setHeroLogoError(false);
+  }, [siteSettings.logoUrl]);
+
+  useEffect(() => {
+    if (!propSiteSettings) {
+      api.getPublicSiteSettings(true).then((res) => {
+        if (res && res.siteName) {
+          setSiteSettings(res);
+        }
+      }).catch(() => {
+        // keep fallback
+      });
+    }
+  }, [propSiteSettings]);
+
+  // Synchronize Site Title, Favicon, OG Tags and Meta description dynamically
   useEffect(() => {
     if (siteSettings.siteTitle) {
       document.title = siteSettings.siteTitle;
@@ -126,6 +149,26 @@ export const LandingPage: React.FC = () => {
     if (siteSettings.metaDescription) {
       const metaDesc = document.querySelector('meta[name="description"]');
       if (metaDesc) metaDesc.setAttribute('content', siteSettings.metaDescription);
+      const ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc) ogDesc.setAttribute('content', siteSettings.metaDescription);
+    }
+    if (siteSettings.siteTitle) {
+      let ogTitle = document.querySelector('meta[property="og:title"]');
+      if (!ogTitle) {
+        ogTitle = document.createElement('meta');
+        ogTitle.setAttribute('property', 'og:title');
+        document.head.appendChild(ogTitle);
+      }
+      ogTitle.setAttribute('content', siteSettings.siteTitle);
+    }
+    if (siteSettings.ogImageUrl) {
+      let ogImg = document.querySelector('meta[property="og:image"]');
+      if (!ogImg) {
+        ogImg = document.createElement('meta');
+        ogImg.setAttribute('property', 'og:image');
+        document.head.appendChild(ogImg);
+      }
+      ogImg.setAttribute('content', siteSettings.ogImageUrl);
     }
     if (siteSettings.faviconUrl) {
       let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
@@ -343,14 +386,12 @@ export const LandingPage: React.FC = () => {
         <div className="max-w-2xl mx-auto px-3.5 h-12 flex items-center justify-between">
           {/* Logo & Site Name */}
           <div className="flex items-center gap-2">
-            {siteSettings.logoUrl ? (
+            {siteSettings.logoUrl && !navLogoError ? (
               <img
                 src={siteSettings.logoUrl}
                 alt={siteSettings.siteName || 'Logo'}
                 className="w-6 h-6 object-contain rounded border border-slate-800 bg-slate-900"
-                onError={(e) => {
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
+                onError={() => setNavLogoError(true)}
               />
             ) : (
               <div className="w-6 h-6 rounded bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400/90">
@@ -737,7 +778,7 @@ export const LandingPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleResetDevices}
-                  disabled={resetting || analysis.devices.length === 0}
+                  disabled={resetting || analysis.devices.length === 0 || siteSettings.allowPublicReset === false}
                   className="w-full py-2 px-3 rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-slate-100 font-semibold text-xs tracking-wider uppercase transition-all shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer border border-rose-500/20"
                 >
                   {resetting ? (
@@ -745,106 +786,138 @@ export const LandingPage: React.FC = () => {
                   ) : (
                     <RotateCcw className="w-3.5 h-3.5" />
                   )}
-                  <span>Reset All Bound Devices</span>
+                  <span>
+                    {siteSettings.allowPublicReset === false ? 'Reset Disabled by Admin' : 'Reset All Bound Devices'}
+                  </span>
                 </button>
               )}
             </div>
           </div>
         ) : (
-          /* Default Public View: Check License Box & Control Button */
+          /* Default Public View: Brand Hero Banner, Check License Box & Control Button */
           <div className="space-y-3">
-            {/* 1. "Check License" Box */}
-            <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 shadow-md space-y-2.5">
-              <div className="flex items-center gap-1.5 pb-1 border-b border-slate-800/80">
-                <Search className="w-3.5 h-3.5 text-indigo-400/90" />
-                <span className="font-semibold text-slate-200 text-xs uppercase tracking-wide">
-                  Check License
-                </span>
-              </div>
-
-              <form onSubmit={handleQuickCheck} className="space-y-2">
-                <div>
-                  <input
-                    type="text"
-                    value={checkKey}
-                    onChange={(e) => setCheckKey(e.target.value.toUpperCase())}
-                    placeholder="VCON-XXXX-XXXX-XXXX"
-                    required
-                    className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-500 focus:border-indigo-500/60 focus:outline-none text-xs tracking-wider font-mono"
+            {/* 0. Brand Identity & Hero Banner */}
+            <div className="text-center py-4 px-3.5 rounded-xl bg-gradient-to-b from-slate-900/90 via-slate-900/60 to-slate-950/80 border border-slate-800/80 shadow-md relative overflow-hidden space-y-2">
+              <div className="flex flex-col items-center justify-center gap-2">
+                {siteSettings.logoUrl && !heroLogoError ? (
+                  <img
+                    src={siteSettings.logoUrl}
+                    alt={siteSettings.siteName || 'Logo'}
+                    className="w-12 h-12 object-contain rounded-xl border border-indigo-500/20 bg-slate-900/90 p-1.5 shadow-md"
+                    onError={() => setHeroLogoError(true)}
                   />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={checking || !checkKey.trim()}
-                  className="w-full py-1.5 px-3 rounded-lg bg-indigo-600/90 hover:bg-indigo-600 active:bg-indigo-700 text-slate-100 font-medium text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
-                >
-                  {checking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
-                  <span>Check License</span>
-                </button>
-              </form>
-
-              {/* Error Message */}
-              {checkError && (
-                <div className="p-2 rounded-lg bg-rose-950/30 border border-rose-900/50 flex items-center gap-2 text-rose-300 text-[11px]">
-                  <XCircle className="w-3.5 h-3.5 text-rose-400/90 shrink-0" />
-                  <span>{checkError}</span>
-                </div>
-              )}
-
-              {/* Check Result: Shows ONLY 3 INFO: Status, Device Limit, Active Device Count */}
-              {checkResult && (
-                <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-850 space-y-2 animate-in fade-in duration-150">
-                  <div className="grid grid-cols-3 gap-1.5 text-center">
-                    {/* 1. Status */}
-                    <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
-                      <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Status</span>
-                      <span
-                        className={`text-[11px] font-semibold uppercase ${
-                          checkResult.status === 'active'
-                            ? 'text-emerald-400/90'
-                            : 'text-rose-400/90'
-                        }`}
-                      >
-                        {checkResult.status}
-                      </span>
-                    </div>
-
-                    {/* 2. Device Limit */}
-                    <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
-                      <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Limit</span>
-                      <span className="text-[11px] font-semibold text-slate-300">
-                        {checkResult.device_limit === -1 ? 'Unlimited' : `${checkResult.device_limit}`}
-                      </span>
-                    </div>
-
-                    {/* 3. Active Device Count */}
-                    <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
-                      <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Active</span>
-                      <span className="text-[11px] font-semibold text-indigo-300/90">
-                        {checkResult.active_device_count}
-                      </span>
-                    </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-xl bg-indigo-600/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-md">
+                    <ShieldCheck className="w-6 h-6" />
                   </div>
-
-                  {/* Clean direct action into Control from Check Result */}
-                  <div className="pt-1.5 border-t border-slate-900 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowControlForm(true);
-                        setControlKey(checkKey.trim().toUpperCase());
-                        setControlError('');
-                      }}
-                      className="text-indigo-400/90 hover:text-indigo-300 font-semibold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
-                    >
-                      <span>Open Control</span>
-                      <ArrowRight className="w-3 h-3" />
-                    </button>
-                  </div>
+                )}
+                <div>
+                  <h1 className="text-sm font-bold text-slate-100 tracking-wide">
+                    {siteSettings.siteName || 'LicenX'}
+                  </h1>
+                  {siteSettings.siteTagline && (
+                    <p className="text-[11px] text-slate-400 font-normal mt-0.5 max-w-sm mx-auto leading-relaxed">
+                      {siteSettings.siteTagline}
+                    </p>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
+
+            {/* 1. "Check License" Box (Displayed only if allowPublicCheck is enabled) */}
+            {siteSettings.allowPublicCheck !== false ? (
+              <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 shadow-md space-y-2.5">
+                <div className="flex items-center gap-1.5 pb-1 border-b border-slate-800/80">
+                  <Search className="w-3.5 h-3.5 text-indigo-400/90" />
+                  <span className="font-semibold text-slate-200 text-xs uppercase tracking-wide">
+                    Check License
+                  </span>
+                </div>
+
+                <form onSubmit={handleQuickCheck} className="space-y-2">
+                  <div>
+                    <input
+                      type="text"
+                      value={checkKey}
+                      onChange={(e) => setCheckKey(e.target.value.toUpperCase())}
+                      placeholder="VCON-XXXX-XXXX-XXXX"
+                      required
+                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-500 focus:border-indigo-500/60 focus:outline-none text-xs tracking-wider font-mono"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={checking || !checkKey.trim()}
+                    className="w-full py-1.5 px-3 rounded-lg bg-indigo-600/90 hover:bg-indigo-600 active:bg-indigo-700 text-slate-100 font-medium text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                  >
+                    {checking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                    <span>Check License</span>
+                  </button>
+                </form>
+
+                {/* Error Message */}
+                {checkError && (
+                  <div className="p-2 rounded-lg bg-rose-950/30 border border-rose-900/50 flex items-center gap-2 text-rose-300 text-[11px]">
+                    <XCircle className="w-3.5 h-3.5 text-rose-400/90 shrink-0" />
+                    <span>{checkError}</span>
+                  </div>
+                )}
+
+                {/* Check Result: Shows ONLY 3 INFO: Status, Device Limit, Active Device Count */}
+                {checkResult && (
+                  <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-850 space-y-2 animate-in fade-in duration-150">
+                    <div className="grid grid-cols-3 gap-1.5 text-center">
+                      {/* 1. Status */}
+                      <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
+                        <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Status</span>
+                        <span
+                          className={`text-[11px] font-semibold uppercase ${
+                            checkResult.status === 'active'
+                              ? 'text-emerald-400/90'
+                              : 'text-rose-400/90'
+                          }`}
+                        >
+                          {checkResult.status}
+                        </span>
+                      </div>
+
+                      {/* 2. Device Limit */}
+                      <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
+                        <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Limit</span>
+                        <span className="text-[11px] font-semibold text-slate-300">
+                          {checkResult.device_limit === -1 ? 'Unlimited' : `${checkResult.device_limit}`}
+                        </span>
+                      </div>
+
+                      {/* 3. Active Device Count */}
+                      <div className="p-1.5 rounded-md bg-slate-900/80 border border-slate-850">
+                        <span className="text-[9px] text-slate-400 block mb-0.5 uppercase">Active</span>
+                        <span className="text-[11px] font-semibold text-indigo-300/90">
+                          {checkResult.active_device_count}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Clean direct action into Control from Check Result */}
+                    <div className="pt-1.5 border-t border-slate-900 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowControlForm(true);
+                          setControlKey(checkKey.trim().toUpperCase());
+                          setControlError('');
+                        }}
+                        className="text-indigo-400/90 hover:text-indigo-300 font-semibold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <span>Open Control</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
 
             {/* 2. "Control" CTA Button below Check License */}
             <div className="space-y-2">

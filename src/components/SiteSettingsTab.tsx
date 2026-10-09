@@ -124,10 +124,25 @@ export const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({
       });
 
       if (uploadRes.success && uploadRes.url) {
-        setSettings((prev) => ({
-          ...prev,
+        const nextSettings = {
+          ...settings,
           [field]: uploadRes.url,
-        }));
+        };
+        setSettings(nextSettings);
+        // Automatically persist uploaded asset to database so it takes effect immediately
+        try {
+          const saveRes = await api.saveSiteSettings(nextSettings);
+          if (saveRes?.siteSettings) {
+            setSettings(saveRes.siteSettings);
+            if (onSettingsUpdated) {
+              onSettingsUpdated(saveRes.siteSettings);
+            }
+          }
+          setSaveSuccess(true);
+          setTimeout(() => setSaveSuccess(false), 3000);
+        } catch (saveErr: any) {
+          console.warn('Auto-save after upload warning:', saveErr);
+        }
       } else {
         throw new Error('Upload returned empty asset URL');
       }

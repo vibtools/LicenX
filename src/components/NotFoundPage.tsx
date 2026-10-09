@@ -19,6 +19,11 @@ interface NotFoundPageProps {
 
 export const NotFoundPage: React.FC<NotFoundPageProps> = ({ currentPath, onGoHome, siteSettings }) => {
   const displayPath = currentPath || (typeof window !== 'undefined' ? window.location.pathname : '');
+  const [logoError, setLogoError] = React.useState(false);
+
+  React.useEffect(() => {
+    setLogoError(false);
+  }, [siteSettings?.logoUrl]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col font-mono text-xs selection:bg-indigo-600/30">
@@ -30,14 +35,12 @@ export const NotFoundPage: React.FC<NotFoundPageProps> = ({ currentPath, onGoHom
             onClick={onGoHome}
             className="flex items-center gap-2.5 hover:opacity-90 transition-opacity cursor-pointer text-left"
           >
-            {siteSettings?.logoUrl ? (
+            {siteSettings?.logoUrl && !logoError ? (
               <img
                 src={siteSettings.logoUrl}
                 alt={siteSettings.siteName || 'Logo'}
                 className="w-7 h-7 object-contain rounded-lg border border-slate-800 bg-slate-900"
-                onError={(e) => {
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
+                onError={() => setLogoError(true)}
               />
             ) : (
               <div className="w-7 h-7 rounded-lg bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
@@ -45,7 +48,7 @@ export const NotFoundPage: React.FC<NotFoundPageProps> = ({ currentPath, onGoHom
               </div>
             )}
             <span className="font-bold text-sm tracking-wide text-slate-100">
-              {siteSettings?.siteName || 'VCON'}
+              {siteSettings?.siteName || 'LicenX'}
             </span>
           </button>
 

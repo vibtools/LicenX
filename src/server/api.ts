@@ -2508,6 +2508,7 @@ apiRouter.get("/public/site-settings", async (req: Request, res: Response) => {
       }
     }
 
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.json(siteSettings);
   } catch (error: any) {
     res

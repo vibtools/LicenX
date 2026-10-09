@@ -2272,8 +2272,7 @@ export async function handleCloudflareApi(
       }
 
       return jsonResponse(siteSettings, 200, {
-        "Cache-Control":
-          "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
       });
     }
 
