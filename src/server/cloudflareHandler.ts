@@ -6,7 +6,7 @@ import {
   generateLicensePin,
   generateRSAKeyPair,
   hashPassword,
-  signPayload,
+  signPayloadForCloudflare,
   verifyPassword,
   verifySessionToken,
 } from "./crypto.js";
@@ -1845,7 +1845,10 @@ export async function handleCloudflareApi(
       };
 
       const canonicalPayload = canonicalJson(signedData);
-      const signature = signPayload(canonicalPayload, privKey);
+      const signature = await signPayloadForCloudflare(
+        canonicalPayload,
+        privKey,
+      );
 
       // Audit log
       await db.execute({

@@ -16,12 +16,14 @@ import os
 import sys
 import time
 import json
+import ipaddress
 import socket
 import platform
 import threading
 import datetime
 import traceback
 from typing import Optional, Dict, Any, List, Tuple
+from urllib.parse import urlsplit
 
 # ---------------------------------------------------------------------------
 # Path Setup: Ensure SDK package can be imported from any working directory
@@ -57,6 +59,103 @@ except ImportError:
         print(f"[FATAL] Failed to import VCON SDK modules: {e}")
         sys.exit(1)
 
+
+_PLACEHOLDER_HOSTS = {"example.com", "example.net", "example.org", "localhost"}
+_PLACEHOLDER_LABELS = {"demo", "example", "fake", "placeholder"}
+_RESERVED_SUFFIXES = (".example", ".invalid", ".local", ".localhost", ".test")
+
+
+def load_live_config(config_path: str) -> SDKConfig:
+    """Load an explicitly selected remote config without SDK fallback defaults."""
+    if not isinstance(config_path, str) or not config_path.strip():
+        raise ValueError("Select an app config JSON file before running live tests.")
+
+    config_path = os.path.abspath(os.path.expanduser(config_path.strip()))
+    if not os.path.isfile(config_path):
+        raise ValueError("The selected app config file does not exist.")
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as config_file:
+            raw_config = json.load(config_file)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("The selected app config is unreadable or invalid JSON.") from exc
+
+    if not isinstance(raw_config, dict):
+        raise ValueError("The app config must be a JSON object.")
+
+    server_url = raw_config.get("server_url")
+    app_name = raw_config.get("app_name")
+    public_key_pem = raw_config.get("public_key_pem")
+    if not all(isinstance(value, str) and value.strip() for value in (server_url, app_name, public_key_pem)):
+        raise ValueError("Config must include server_url, app_name, and public_key_pem.")
+
+    normalized_url = server_url.rstrip("/")
+    if normalized_url.endswith("/api"):
+        normalized_url = normalized_url[:-4]
+
+    config = SDKConfig.from_file(config_path)
+    if (
+        config.server_url != normalized_url
+        or config.app_name != app_name
+        or config.public_key_pem != public_key_pem
+    ):
+        raise ValueError("The SDK could not load the selected config values; no fallback is allowed.")
+
+    try:
+        parsed_url = urlsplit(config.server_url)
+        hostname = parsed_url.hostname
+        parsed_url.port
+    except ValueError as exc:
+        raise ValueError("Config contains an invalid server URL.") from exc
+
+    if (
+        parsed_url.scheme != "https"
+        or not hostname
+        or any(character.isspace() for character in config.server_url)
+        or parsed_url.username
+        or parsed_url.password
+        or parsed_url.query
+        or parsed_url.fragment
+    ):
+        raise ValueError("Live tests require a valid HTTPS server URL without embedded credentials.")
+
+    normalized_host = hostname.lower().rstrip(".")
+    host_labels = normalized_host.split(".")
+    if (
+        normalized_host in _PLACEHOLDER_HOSTS
+        or any(label in _PLACEHOLDER_LABELS for label in host_labels)
+        or normalized_host.endswith(_RESERVED_SUFFIXES)
+    ):
+        raise ValueError("Local, demo, and placeholder server URLs cannot be used for live tests.")
+
+    try:
+        ip_address = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        ip_address = None
+    if ip_address is not None and not ip_address.is_global:
+        raise ValueError("Live tests cannot target a loopback or private IP address.")
+    if ip_address is None and (
+        "." not in normalized_host
+        or all(label.isdigit() for label in normalized_host.split("."))
+    ):
+        raise ValueError("Live tests require a fully qualified remote server hostname.")
+
+    pem = public_key_pem.strip()
+    if "\\n" in pem and "\n" not in pem:
+        pem = pem.replace("\\n", "\n")
+    valid_public_pem = (
+        pem.startswith("-----BEGIN PUBLIC KEY-----")
+        and pem.endswith("-----END PUBLIC KEY-----")
+    ) or (
+        pem.startswith("-----BEGIN RSA PUBLIC KEY-----")
+        and pem.endswith("-----END RSA PUBLIC KEY-----")
+    )
+    if not valid_public_pem or len(pem.splitlines()) < 3:
+        raise ValueError("Config must contain a PEM-encoded trusted public key.")
+
+    config.public_key_pem = pem
+    return config
+
 # Check Tkinter availability
 try:
     import tkinter as tk
@@ -73,10 +172,16 @@ except ImportError:
 class DiagnosticEngine:
     """Executes full diagnostic test suite against SDK and remote backend"""
 
-    def __init__(self, config: SDKConfig, client: Optional[XLicenseClient] = None):
+    def __init__(
+        self,
+        config: SDKConfig,
+        client: Optional[XLicenseClient] = None,
+        live_config_loaded: bool = False,
+    ):
         self.config = config
         self.client = client or XLicenseClient(config=config)
         self.communicator = self.client.communicator
+        self.live_config_loaded = live_config_loaded
         self.logs: List[str] = []
         self.results: List[Dict[str, Any]] = []
 
@@ -92,11 +197,46 @@ class DiagnosticEngine:
         line = f"[{ts}] {prefix} {message}"
         self.logs.append(line)
 
-    def run_all_tests(self, active_key: Optional[str] = None, callback=None) -> Dict[str, Any]:
+    def run_all_tests(self, callback=None) -> Dict[str, Any]:
         """Runs 12-stage forensic diagnostic test suite"""
         self.logs.clear()
         self.results.clear()
         start_time = time.time()
+
+        if not self.live_config_loaded:
+            self.log("No explicitly loaded live app config; diagnostics are blocked.", "FAIL")
+            self.results.append({
+                "name": "Live configuration preflight",
+                "status": "FAIL",
+                "details": "Load a valid remote HTTPS app config before running diagnostics.",
+            })
+            return {
+                "passed": 0,
+                "failed": 1,
+                "total": 1,
+                "health_pct": 0.0,
+                "duration": round(time.time() - start_time, 2),
+                "results": self.results,
+                "logs": self.logs,
+            }
+
+        active_key = self.client.get_current_key()
+        if not active_key:
+            self.log("No activated test license; live diagnostics are blocked.", "FAIL")
+            self.results.append({
+                "name": "Live license preflight",
+                "status": "FAIL",
+                "details": "Activate a dedicated live test license before running diagnostics.",
+            })
+            return {
+                "passed": 0,
+                "failed": 1,
+                "total": 1,
+                "health_pct": 0.0,
+                "duration": round(time.time() - start_time, 2),
+                "results": self.results,
+                "logs": self.logs,
+            }
 
         self.log("=" * 65, "INFO")
         self.log("VCON License SDK - Full Forensic Diagnostic Test Started", "INFO")
@@ -122,11 +262,17 @@ class DiagnosticEngine:
 
         passed = 0
         failed = 0
+        preflight_tests = {
+            "TEST 3: Configuration Discovery & Key Format",
+            "TEST 4: Backend Health & Network Latency",
+            "TEST 5: Public Key Server Handshake",
+        }
 
         for idx, (name, test_func) in enumerate(tests, 1):
             self.log(f"Starting {name}...", "STEP")
             if callback:
                 callback(idx, len(tests), name, "RUNNING")
+            success = False
             try:
                 success, details = test_func()
                 if success:
@@ -146,11 +292,16 @@ class DiagnosticEngine:
             if callback:
                 callback(idx, len(tests), name, "PASS" if self.results[-1]["status"] == "PASS" else "FAIL")
 
+            if name in preflight_tests and not success:
+                self.log("Stopping diagnostics before license tests because preflight failed.", "WARN")
+                break
+
         duration = round(time.time() - start_time, 2)
-        health_pct = round((passed / len(tests)) * 100, 1)
+        total = len(self.results)
+        health_pct = round((passed / total) * 100, 1) if total else 0.0
 
         self.log("=" * 65, "INFO")
-        self.log(f"Diagnostic Completed in {duration}s. Passed: {passed}/{len(tests)} ({health_pct}%)", "INFO")
+        self.log(f"Diagnostic Completed in {duration}s. Passed: {passed}/{total} ({health_pct}%)", "INFO")
         if failed > 0:
             self.log(f"WARNING: {failed} tests reported issues. Please inspect the log below.", "WARN")
         else:
@@ -160,7 +311,7 @@ class DiagnosticEngine:
         return {
             "passed": passed,
             "failed": failed,
-            "total": len(tests),
+            "total": total,
             "health_pct": health_pct,
             "duration": duration,
             "results": self.results,
@@ -399,6 +550,8 @@ class DiagnosticEngine:
         hwid = self.client.get_hwid()
         telemetry = DeviceManager.get_device_telemetry()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        active_key = self.client.get_current_key()
+        masked_key = f"{active_key[:8]}***" if active_key else "None"
 
         passed = sum(1 for r in self.results if r["status"] == "PASS")
         total = len(self.results)
@@ -427,7 +580,7 @@ class DiagnosticEngine:
             f"Application ID  : {self.config.app_name}",
             f"Min Version Req : {self.config.min_version}",
             f"Public Key PEM  : {'Loaded (' + str(len(self.config.public_key_pem)) + ' chars)' if self.config.public_key_pem else 'None'}",
-            f"Active Session  : {self.client.get_current_key() or 'None'}",
+            f"Active Session  : {masked_key}",
             f"License Tier    : {self.client.get_tier()}",
             "",
             "3. STAGE-BY-STAGE TEST RESULTS:",
@@ -482,17 +635,20 @@ if HAS_TKINTER:
 
             self.configure(bg=self.c_bg)
 
-            # Initialize SDK Client
-            self.config = SDKConfig.from_file()
+            # A live target must be selected explicitly; never inherit SDK localhost defaults.
+            self.config = SDKConfig(server_url="", public_key_pem="", app_name="")
+            self.config_loaded = False
             self.client = XLicenseClient(config=self.config)
-            self.engine = DiagnosticEngine(config=self.config, client=self.client)
+            self.engine = DiagnosticEngine(
+                config=self.config,
+                client=self.client,
+                live_config_loaded=False,
+            )
             self.is_running_tests = False
 
             self._setup_styles()
             self._build_ui()
-
-            # Attempt auto-login on startup in background
-            self.after(300, self._try_auto_login)
+            self._set_config_actions_enabled(False)
 
         def _setup_styles(self):
             style = ttk.Style(self)
@@ -600,6 +756,7 @@ if HAS_TKINTER:
             self.ent_server = tk.Entry(row1, font=("Courier", 9), bg=self.c_input_bg, fg=self.c_text, insertbackground=self.c_text, bd=1, relief="solid")
             self.ent_server.insert(0, self.config.server_url)
             self.ent_server.pack(side="left", fill="x", expand=True)
+            self.ent_server.configure(state="readonly")
 
             row2 = tk.Frame(card_cfg, bg=self.c_card)
             row2.pack(fill="x", pady=2)
@@ -607,6 +764,7 @@ if HAS_TKINTER:
             self.ent_app_name = tk.Entry(row2, font=("Courier", 9), bg=self.c_input_bg, fg=self.c_text, insertbackground=self.c_text, bd=1, relief="solid")
             self.ent_app_name.insert(0, self.config.app_name)
             self.ent_app_name.pack(side="left", fill="x", expand=True)
+            self.ent_app_name.configure(state="readonly")
 
             row3 = tk.Frame(card_cfg, bg=self.c_card)
             row3.pack(fill="x", pady=(6, 2))
@@ -624,18 +782,6 @@ if HAS_TKINTER:
             )
             btn_load_cfg.pack(side="left")
 
-            btn_apply_cfg = tk.Button(
-                row3,
-                text="\U0001f504 Apply URL & Scope",
-                font=("Helvetica", 8),
-                bg=self.c_card_border,
-                fg=self.c_text,
-                relief="flat",
-                command=self._apply_config_inputs,
-                cursor="hand2",
-            )
-            btn_apply_cfg.pack(side="right")
-
             # 2. Authentication Card
             card_auth = tk.LabelFrame(
                 parent,
@@ -650,11 +796,13 @@ if HAS_TKINTER:
             )
             card_auth.pack(fill="x", pady=(0, 10))
 
-            # License Key and Optional PIN Label
-            lbl_key_pin = tk.Frame(card_auth, bg=self.c_card)
-            lbl_key_pin.pack(fill="x")
-            tk.Label(lbl_key_pin, text="License Key:", font=("Helvetica", 9, "bold"), fg=self.c_text, bg=self.c_card).pack(side="left")
-            tk.Label(lbl_key_pin, text="PIN (Optional):", font=("Helvetica", 8), fg=self.c_text_muted, bg=self.c_card).pack(side="right", padx=(0, 60))
+            tk.Label(
+                card_auth,
+                text="Dedicated Test License Key:",
+                font=("Helvetica", 9, "bold"),
+                fg=self.c_text,
+                bg=self.c_card,
+            ).pack(anchor="w")
 
             row_key = tk.Frame(card_auth, bg=self.c_card)
             row_key.pack(fill="x", pady=(2, 6))
@@ -669,18 +817,6 @@ if HAS_TKINTER:
                 relief="solid",
             )
             self.ent_key.pack(side="left", fill="x", expand=True)
-
-            self.ent_pin = tk.Entry(
-                row_key,
-                font=("Courier", 10, "bold"),
-                bg=self.c_input_bg,
-                fg="#38bdf8",
-                insertbackground=self.c_text,
-                bd=1,
-                relief="solid",
-                width=6,
-            )
-            self.ent_pin.pack(side="left", padx=(6, 4))
 
             btn_paste = tk.Button(
                 row_key,
@@ -893,6 +1029,12 @@ if HAS_TKINTER:
         # -------------------------------------------------------------------
         # User Action Handlers
         # -------------------------------------------------------------------
+        def _set_config_actions_enabled(self, enabled: bool):
+            state = "normal" if enabled else "disabled"
+            self.btn_login.config(state=state)
+            self.btn_autologin.config(state=state)
+            self.btn_run_tests.config(state=state)
+
         def _append_log(self, text: str, tag: str = "INFO"):
             self.txt_logs.insert(tk.END, text + "\n", tag)
             self.txt_logs.see(tk.END)
@@ -909,13 +1051,6 @@ if HAS_TKINTER:
         def _paste_key(self):
             try:
                 clip = self.clipboard_get().strip().upper()
-                if "PIN:" in clip:
-                    # Parse 'KEY PIN: 1234' format if copied together
-                    parts = clip.split("PIN:")
-                    clip = parts[0].strip()
-                    pin_part = parts[1].strip().split()[0]
-                    self.ent_pin.delete(0, tk.END)
-                    self.ent_pin.insert(0, pin_part)
                 self.ent_key.delete(0, tk.END)
                 self.ent_key.insert(0, clip)
             except Exception:
@@ -927,54 +1062,76 @@ if HAS_TKINTER:
                 filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
             )
             if path:
+                if self.client.is_authenticated():
+                    messagebox.showwarning("Logout First", "Log out the active test license before changing config.")
+                    return
+
+                self.config_loaded = False
+                self._set_config_actions_enabled(False)
+                self.config = SDKConfig(server_url="", public_key_pem="", app_name="")
+                self.client = XLicenseClient(config=self.config)
+                self.engine = DiagnosticEngine(
+                    config=self.config,
+                    client=self.client,
+                    live_config_loaded=False,
+                )
+                self.ent_server.configure(state="normal")
+                self.ent_server.delete(0, tk.END)
+                self.ent_server.configure(state="readonly")
+                self.ent_app_name.configure(state="normal")
+                self.ent_app_name.delete(0, tk.END)
+                self.ent_app_name.configure(state="readonly")
+                self.ent_key.delete(0, tk.END)
+
                 try:
-                    self.config = SDKConfig.from_file(path)
+                    config = load_live_config(path)
+                    self.config = config
                     self.client = XLicenseClient(config=self.config)
-                    self.engine = DiagnosticEngine(config=self.config, client=self.client)
+                    self.engine = DiagnosticEngine(
+                        config=self.config,
+                        client=self.client,
+                        live_config_loaded=True,
+                    )
+                    self.config_loaded = True
+                    self.ent_server.configure(state="normal")
                     self.ent_server.delete(0, tk.END)
                     self.ent_server.insert(0, self.config.server_url)
+                    self.ent_server.configure(state="readonly")
+                    self.ent_app_name.configure(state="normal")
                     self.ent_app_name.delete(0, tk.END)
                     self.ent_app_name.insert(0, self.config.app_name)
-                    self._append_log(f"Successfully loaded config from: {path}", "PASS")
+                    self.ent_app_name.configure(state="readonly")
+                    self._set_config_actions_enabled(True)
+                    self._append_log("Remote HTTPS app config loaded and validated.", "PASS")
                     self._append_log(f"Scope: {self.config.app_name} | Server: {self.config.server_url}", "INFO")
                 except Exception as e:
                     messagebox.showerror("Config Error", f"Failed to parse config: {e}")
 
-        def _apply_config_inputs(self):
-            srv = self.ent_server.get().strip().rstrip("/")
-            app = self.ent_app_name.get().strip()
-            self.config.server_url = srv
-            self.config.app_name = app
-            self.client = XLicenseClient(config=self.config)
-            self.engine = DiagnosticEngine(config=self.config, client=self.client)
-            self._append_log(f"Config parameters updated: Server={srv}, Scope={app}", "PASS")
-
-        def _try_auto_login(self):
-            saved_key = self.client.storage.load_saved_session()
-            if saved_key:
-                self.ent_key.delete(0, tk.END)
-                self.ent_key.insert(0, saved_key)
-                self._append_log(f"Found saved session key '{saved_key[:8]}...'. Auto-verifying online...", "INFO")
-                self._handle_auto_login()
-
         def _handle_auto_login(self):
+            if not self.config_loaded:
+                messagebox.showwarning("Config Required", "Load a valid remote app config first.")
+                return
+
             def run():
                 res = self.client.auto_login()
                 self.after(0, lambda: self._update_auth_ui(res))
             threading.Thread(target=run, daemon=True).start()
 
         def _handle_login(self):
+            if not self.config_loaded:
+                messagebox.showwarning("Config Required", "Load a valid remote app config first.")
+                return
+
             key = self.ent_key.get().strip().upper()
-            pin = self.ent_pin.get().strip() or None
             if not key:
                 messagebox.showwarning("Input Required", "Please enter a License Key to login.")
                 return
 
             self.btn_login.config(state="disabled", text="Activating...")
-            self._append_log(f"Sending activation request for key '{key[:8]}...' (PIN: {pin or 'None'}) to {self.config.server_url}...", "INFO")
+            self._append_log(f"Sending activation request for key '{key[:8]}...' to {self.config.server_url}...", "INFO")
 
             def run():
-                res = self.client.login(key, pin=pin)
+                res = self.client.login(key)
                 self.after(0, lambda: self._update_auth_ui(res))
 
             threading.Thread(target=run, daemon=True).start()
@@ -1009,6 +1166,12 @@ if HAS_TKINTER:
                 self._append_log(f"Login Failed [{res.status_code}]: {res.message} (Code: {res.code})", "FAIL")
 
         def _start_diagnostic_tests(self):
+            if not self.config_loaded:
+                messagebox.showwarning("Config Required", "Load a valid remote app config first.")
+                return
+            if not self.client.get_current_key():
+                messagebox.showwarning("Test License Required", "Activate a dedicated test license first.")
+                return
             if self.is_running_tests:
                 return
 
@@ -1017,14 +1180,12 @@ if HAS_TKINTER:
             self.progress_bar["value"] = 0
             self.txt_logs.delete("1.0", tk.END)
 
-            active_key = self.ent_key.get().strip().upper()
-
             def progress_cb(current, total, name, status):
                 pct = int((current / total) * 100)
                 self.after(0, lambda: self._update_progress_ui(pct, name, status))
 
             def run():
-                summary = self.engine.run_all_tests(active_key=active_key, callback=progress_cb)
+                summary = self.engine.run_all_tests(callback=progress_cb)
                 self.after(0, lambda: self._finish_diagnostic_tests(summary))
 
             threading.Thread(target=run, daemon=True).start()
@@ -1099,30 +1260,40 @@ def run_cli_mode():
     print("=" * 70)
     if not HAS_TKINTER:
         print("[!] Note: Running in CLI mode because Tkinter GUI is not installed in this environment.")
-    print("[*] Discovering SDK configuration...")
+    config_path = input("[?] Path to the remote app config JSON: ").strip()
+    try:
+        cfg = load_live_config(config_path)
+    except ValueError as exc:
+        print(f"[ERROR] Live config rejected: {exc}")
+        sys.exit(1)
 
-    cfg = SDKConfig.from_file()
     client = XLicenseClient(config=cfg)
-    engine = DiagnosticEngine(config=cfg, client=client)
+    engine = DiagnosticEngine(config=cfg, client=client, live_config_loaded=True)
 
     print(f"[*] Target Server URL : {cfg.server_url}")
     print(f"[*] Target App Scope  : {cfg.app_name}")
     print(f"[*] Device HWID       : {client.get_hwid()}")
     print("-" * 70)
 
-    # Prompt user for optional license key
-    user_key = None
+    # Activation is explicit so the exit hook can release the test device.
     try:
-        saved = client.storage.load_saved_session()
-        prompt_txt = f"[?] Enter License Key to test (Press Enter to use saved '{saved[:8]}...')" if saved else "[?] Enter License Key to test (optional, press Enter to test without key): "
-        val = input(prompt_txt).strip()
-        user_key = val.upper() if val else saved
+        user_key = input("[?] Dedicated live test license key: ").strip().upper()
     except (KeyboardInterrupt, EOFError):
         print("\nExiting...")
         sys.exit(0)
 
-    print("\n[*] Launching 12-stage forensic diagnostic test suite...\n")
-    summary = engine.run_all_tests(active_key=user_key)
+    if not user_key:
+        print("[ERROR] A dedicated test license key is required for live diagnostics.")
+        sys.exit(1)
+
+    login_result = client.login(user_key)
+    if not login_result.success:
+        print(f"[ERROR] Live test license activation rejected: {login_result.code} - {login_result.message}")
+        sys.exit(1)
+    print("[+] Dedicated test license activated; the exit hook will attempt to release its device slot.")
+
+    print("\n[*] Launching SDK diagnostic test suite...\n")
+    summary = engine.run_all_tests()
 
     for line in summary["logs"]:
         print(line)
