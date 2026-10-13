@@ -38,20 +38,94 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [username, setUsername] = useState('');
   const [publicKeyPem, setPublicKeyPem] = useState('');
-  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
-    const path = window.location.pathname;
-    if (path.includes('/apps') || path.includes('/app')) return 'apps';
-    if (path.includes('/licenses')) return 'licenses';
-    if (path.includes('/devices')) return 'devices';
-    if (path.includes('/logs')) return 'logs';
-    if (path.includes('/simulator')) return 'simulator';
-    if (path.includes('/code')) return 'code';
-    if (path.includes('/profile')) return 'profile';
+
+  const VALID_TABS: ActiveTab[] = [
+    'overview',
+    'apps',
+    'licenses',
+    'devices',
+    'logs',
+    'simulator',
+    'code',
+    'profile',
+    'site-settings',
+    'settings',
+  ];
+
+  const resolveActiveTab = (): ActiveTab => {
+    if (typeof window === 'undefined') return 'overview';
+    const path = window.location.pathname.toLowerCase();
+
+    // 1. Pathname matches
     if (path.includes('/site-settings')) return 'site-settings';
     if (path.includes('/settings')) return 'settings';
+    if (path.includes('/apps') || path.includes('/app')) return 'apps';
+    if (path.includes('/licenses') || path.includes('/license')) return 'licenses';
+    if (path.includes('/devices') || path.includes('/device') || path.includes('/hwid')) return 'devices';
+    if (path.includes('/logs') || path.includes('/log') || path.includes('/audit')) return 'logs';
+    if (path.includes('/simulator') || path.includes('/validator')) return 'simulator';
+    if (path.includes('/code') || path.includes('/sdk')) return 'code';
+    if (path.includes('/profile')) return 'profile';
+    if (path.includes('/overview') || path.includes('/dashboard')) return 'overview';
+
+    // 2. Query param ?tab=...
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab')?.toLowerCase() as ActiveTab;
+      if (tabParam && VALID_TABS.includes(tabParam)) return tabParam;
+    } catch {}
+
+    // 3. Hash #...
+    try {
+      const hash = window.location.hash.replace('#', '').toLowerCase() as ActiveTab;
+      if (hash && VALID_TABS.includes(hash)) return hash;
+    } catch {}
+
+    // 4. Session / local storage fallback (preserves tab across page reload on /vcon)
+    try {
+      const sessionTab = sessionStorage.getItem('vcon_admin_active_tab') as ActiveTab;
+      if (sessionTab && VALID_TABS.includes(sessionTab)) return sessionTab;
+      const localTab = localStorage.getItem('vcon_admin_active_tab') as ActiveTab;
+      if (localTab && VALID_TABS.includes(localTab)) return localTab;
+    } catch {}
+
     return 'overview';
-  });
+  };
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(resolveActiveTab);
   const [stats, setStats] = useState<SystemStats | null>(null);
+
+  // Tab change handler with URL and storage sync
+  const handleTabChange = (tab: ActiveTab, updateHistory = true) => {
+    setActiveTab(tab);
+    try {
+      sessionStorage.setItem('vcon_admin_active_tab', tab);
+      localStorage.setItem('vcon_admin_active_tab', tab);
+    } catch {}
+
+    if (updateHistory && typeof window !== 'undefined') {
+      const targetPath = tab === 'overview' ? '/vcon' : `/vcon/${tab}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({ tab }, '', targetPath);
+        setCurrentPath(targetPath);
+      }
+    }
+  };
+
+  // Sync browser URL and storage whenever activeTab or auth state updates
+  useEffect(() => {
+    if (isAdminRoute && authenticated) {
+      const targetPath = activeTab === 'overview' ? '/vcon' : `/vcon/${activeTab}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.replaceState({ tab: activeTab }, '', targetPath);
+        setCurrentPath(targetPath);
+      }
+      try {
+        sessionStorage.setItem('vcon_admin_active_tab', activeTab);
+        localStorage.setItem('vcon_admin_active_tab', activeTab);
+      } catch {}
+    }
+  }, [activeTab, isAdminRoute, authenticated]);
 
   // Site Settings & Branding State
   const [siteSettings, setSiteSettings] = useState<SiteSettings>(DEFAULT_SITE_SETTINGS);
@@ -102,8 +176,22 @@ export default function App() {
     }
   }, [siteSettings]);
 
-  // Sidebar Layout State
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Sidebar Layout State with persistence
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('vcon_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleSetSidebarCollapsed = (val: boolean) => {
+    setSidebarCollapsed(val);
+    try {
+      localStorage.setItem('vcon_sidebar_collapsed', String(val));
+    } catch {}
+  };
+
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Modals
@@ -114,10 +202,15 @@ export default function App() {
   // Refresh trigger counter
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Sync route on popstate
+  // Sync route and active tab on popstate (browser back / forward buttons)
   useEffect(() => {
     const handleLocationChange = () => {
-      setCurrentPath(window.location.pathname);
+      const newPath = window.location.pathname;
+      setCurrentPath(newPath);
+      if (newPath.startsWith('/vcon')) {
+        const resolved = resolveActiveTab();
+        setActiveTab(resolved);
+      }
     };
     window.addEventListener('popstate', handleLocationChange);
     return () => window.removeEventListener('popstate', handleLocationChange);
@@ -168,6 +261,14 @@ export default function App() {
     clearAuthToken();
     setAuthenticated(false);
     setUsername('');
+    try {
+      sessionStorage.removeItem('vcon_admin_active_tab');
+    } catch {}
+    if (typeof window !== 'undefined') {
+      window.history.replaceState({}, '', '/vcon');
+      setCurrentPath('/vcon');
+    }
+    setActiveTab('overview');
   };
 
   const handleRefresh = async () => {
@@ -262,13 +363,13 @@ export default function App() {
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         username={username}
         onLogout={handleLogout}
         r2Configured={setupStatus?.r2Configured ?? false}
         hasTursoEnv={setupStatus?.hasTursoEnv ?? false}
         collapsed={sidebarCollapsed}
-        setCollapsed={setSidebarCollapsed}
+        setCollapsed={handleSetSidebarCollapsed}
         mobileOpen={mobileSidebarOpen}
         setMobileOpen={setMobileSidebarOpen}
         stats={
@@ -304,7 +405,7 @@ export default function App() {
             <OverviewTab
               onOpenCreate={() => setShowCreateModal(true)}
               onOpenBulk={() => setShowBulkModal(true)}
-              onNavigateTab={(tab) => setActiveTab(tab)}
+              onNavigateTab={(tab) => handleTabChange(tab)}
             />
           )}
 
@@ -338,7 +439,7 @@ export default function App() {
 
           {activeTab === 'site-settings' && (
             <SiteSettingsTab
-              onNavigateToTab={(tab) => setActiveTab(tab)}
+              onNavigateToTab={(tab) => handleTabChange(tab)}
               onSettingsUpdated={(newS) => setSiteSettings(newS)}
             />
           )}

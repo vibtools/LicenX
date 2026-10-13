@@ -38,15 +38,50 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [tierFilter, setTierFilter] = useState('all');
-  const [appFilter, setAppFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_licenses_status_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
+  const [tierFilter, setTierFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_licenses_tier_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
+  const [appFilter, setAppFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_licenses_app_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      const p = sessionStorage.getItem('vcon_licenses_page');
+      return p ? parseInt(p, 10) || 1 : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [pageSize, setPageSize] = useState(20);
+
+  // Persist filter and pagination changes to sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('vcon_licenses_status_filter', statusFilter);
+      sessionStorage.setItem('vcon_licenses_tier_filter', tierFilter);
+      sessionStorage.setItem('vcon_licenses_app_filter', appFilter);
+      sessionStorage.setItem('vcon_licenses_page', String(currentPage));
+    } catch {}
+  }, [statusFilter, tierFilter, appFilter, currentPage]);
 
   // Settings dropdown state per license
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);

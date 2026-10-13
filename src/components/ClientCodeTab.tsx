@@ -7,7 +7,23 @@ interface ClientCodeTabProps {
 }
 
 export const ClientCodeTab: React.FC<ClientCodeTabProps> = ({ publicKeyPem }) => {
-  const [activeLang, setActiveLang] = useState<'python' | 'curl' | 'node' | 'csharp'>('python');
+  const [activeLang, setActiveLang] = useState<'python' | 'curl' | 'node' | 'csharp'>(() => {
+    try {
+      const saved = sessionStorage.getItem('vcon_client_code_lang');
+      if (saved === 'python' || saved === 'curl' || saved === 'node' || saved === 'csharp') {
+        return saved;
+      }
+    } catch {}
+    return 'python';
+  });
+
+  const handleSelectLang = (lang: 'python' | 'curl' | 'node' | 'csharp') => {
+    setActiveLang(lang);
+    try {
+      sessionStorage.setItem('vcon_client_code_lang', lang);
+    } catch {}
+  };
+
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
@@ -263,7 +279,7 @@ public class VconLicenseClient
         <div className="flex items-center gap-2">
           <div className="flex items-center bg-slate-900 border border-slate-800 rounded p-0.5">
             <button
-              onClick={() => setActiveLang('python')}
+              onClick={() => handleSelectLang('python')}
               className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
                 activeLang === 'python' ? 'bg-indigo-600/90 text-slate-100' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -271,7 +287,7 @@ public class VconLicenseClient
               Python (SDK)
             </button>
             <button
-              onClick={() => setActiveLang('curl')}
+              onClick={() => handleSelectLang('curl')}
               className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
                 activeLang === 'curl' ? 'bg-indigo-600/90 text-slate-100' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -279,7 +295,7 @@ public class VconLicenseClient
               cURL / REST
             </button>
             <button
-              onClick={() => setActiveLang('node')}
+              onClick={() => handleSelectLang('node')}
               className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
                 activeLang === 'node' ? 'bg-indigo-600/90 text-slate-100' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -287,7 +303,7 @@ public class VconLicenseClient
               Node.js
             </button>
             <button
-              onClick={() => setActiveLang('csharp')}
+              onClick={() => handleSelectLang('csharp')}
               className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
                 activeLang === 'csharp' ? 'bg-indigo-600/90 text-slate-100' : 'text-slate-400 hover:text-slate-200'
               }`}

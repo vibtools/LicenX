@@ -12,8 +12,22 @@ export const DevicesTab: React.FC = () => {
   const [actionLoading, setActionLoading] = useState(false);
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      const p = sessionStorage.getItem('vcon_devices_page');
+      return p ? parseInt(p, 10) || 1 : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [pageSize, setPageSize] = useState(20);
+
+  // Persist pagination to sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('vcon_devices_page', String(currentPage));
+    } catch {}
+  }, [currentPage]);
 
   const loadDevices = async (force = false) => {
     try {

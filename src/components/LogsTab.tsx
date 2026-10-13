@@ -7,11 +7,32 @@ import { TablePagination } from './TablePagination';
 export const LogsTab: React.FC = () => {
   const [logs, setLogs] = useState<ValidationLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [actionFilter, setActionFilter] = useState('all');
+  const [actionFilter, setActionFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_logs_action_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      const p = sessionStorage.getItem('vcon_logs_page');
+      return p ? parseInt(p, 10) || 1 : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [pageSize, setPageSize] = useState(20);
+
+  // Persist filter and pagination to sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('vcon_logs_action_filter', actionFilter);
+      sessionStorage.setItem('vcon_logs_page', String(currentPage));
+    } catch {}
+  }, [actionFilter, currentPage]);
 
   const loadLogs = async (force = false) => {
     try {
