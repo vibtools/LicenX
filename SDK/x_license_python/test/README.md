@@ -50,6 +50,8 @@ python app.py --cli
    - **Auto-Login:** Automatically recovers and validates saved sessions on startup.
    - **Heartbeat Ping:** Test on-demand pinging and background thread health.
    - **Logout & Unbind:** Releases machine slot on the server immediately so another machine can use it.
+   - **Admin Logout Observation:** While logged in, arm the 120-second observer, then log out/unlink this device in the Admin Panel. The test console checks the SDK's next 5-second heartbeat, clears its local session when the server reports `DEVICE_UNBOUND`, and records the result.
+   - Admin-triggered session events are included in the next saved/copied report even when the observer was not armed. Unarmed events are marked `OBSERVED`, not counted as a passed diagnostic; save/copy the report after the event.
 
 3. **12-Stage Diagnostic Test Suite (Test Button):**
    - Click **"Run Full SDK Diagnostic Test"** to test all SDK and Backend features:
@@ -63,8 +65,10 @@ python app.py --cli
      - Stage 8: Live License Validation Protocol
      - Stage 9: Cryptographic Signature & Tamper Resistance Verification
      - Stage 10: Heartbeat Ping & Server Time Synchronization (<60s drift)
-     - Stage 11: Local Storage Encryption & Anti-Rollback Guard
-     - Stage 12: Device Slot Release Protocol Check
+       - Stage 11: Local session storage round-trip/cleanup and clock-drift guard boundaries (session data is Base64-obfuscated, not encrypted).
+       - Stage 12: Actual SDK logout followed by a heartbeat that must return `DEVICE_UNBOUND`.
+
+   Full diagnostics end by logging out the active test license and clearing its local saved session. Use only a dedicated disposable test license. A passing diagnostic run checks this configured target; it is not production-readiness certification.
 
 4. **Forensic Report Export:**
    - **Save Report (.log):** Saves the complete report to `sdk_test_report.log`.

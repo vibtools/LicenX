@@ -2,10 +2,17 @@ import json
 import os
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from x_license_python.config import SDKConfig
-from x_license_python.test.app import DiagnosticEngine, load_live_config
+from x_license_python.test.app import (
+    DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS,
+    DiagnosticEngine,
+    create_diagnostic_client,
+    is_admin_device_logout_reason,
+    load_live_config,
+    record_session_revocation,
+)
 
 
 PUBLIC_KEY = "-----BEGIN PUBLIC KEY-----\ntest-key\n-----END PUBLIC KEY-----"
@@ -207,6 +214,189 @@ class LiveConfigTests(unittest.TestCase):
 
         self.assertNotIn("VCON-LIVE-SECRET-KEY", report)
         self.assertIn("VCON-LIV***", report)
+
+    def test_diagnostic_client_uses_short_heartbeat_and_revocation_callback(self):
+        callback = Mock()
+        sentinel_client = object()
+        config = SDKConfig(ping_interval_seconds=1200, enable_background_heartbeat=False)
+
+        with patch("x_license_python.test.app.XLicenseClient", return_value=sentinel_client) as client_factory:
+            client = create_diagnostic_client(config, callback)
+
+        self.assertIs(client, sentinel_client)
+        self.assertEqual(config.ping_interval_seconds, DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS)
+        self.assertTrue(config.enable_background_heartbeat)
+        client_factory.assert_called_once_with(config=config, on_license_revoked=callback)
+
+    def test_admin_logout_reason_is_distinguished_from_other_revocations(self):
+        self.assertTrue(
+            is_admin_device_logout_reason(
+                "Device binding was logged out or unlinked by administrator"
+            )
+        )
+        self.assertFalse(is_admin_device_logout_reason("License has expired"))
+
+    def test_storage_and_clock_diagnostic_does_not_claim_encryption(self):
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=Mock(),
+            live_config_loaded=True,
+        )
+
+        passed, details = engine._test_storage_integrity()
+
+        self.assertTrue(passed)
+        self.assertIn("clock drift checks passed", details)
+        self.assertIn("not encrypted", details)
+
+    def test_logout_diagnostic_checks_unbound_ping_and_clears_local_session(self):
+        client = Mock()
+        client.get_current_key.return_value = "VCON-TEST-KEY"
+        client.get_hwid.return_value = "HWID-TEST"
+        client.logout.return_value = True
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=client,
+            live_config_loaded=True,
+        )
+        engine.communicator.ping_heartbeat.return_value = (
+            False,
+            {"valid": False, "code": "DEVICE_UNBOUND"},
+        )
+
+        passed, details = engine._test_logout_protocol("VCON-TEST-KEY")
+
+        self.assertTrue(passed)
+        self.assertIn("DEVICE_UNBOUND", details)
+        client.logout.assert_called_once_with(clear_saved_license=True)
+        engine.communicator.ping_heartbeat.assert_called_once_with(
+            "VCON-TEST-KEY",
+            "HWID-TEST",
+        )
+
+    def test_logout_diagnostic_fails_for_unrelated_ping_rejection(self):
+        client = Mock()
+        client.get_current_key.return_value = "VCON-TEST-KEY"
+        client.logout.return_value = True
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=client,
+            live_config_loaded=True,
+        )
+        engine.communicator.ping_heartbeat.return_value = (
+            False,
+            {"valid": False, "code": "LICENSE_EXPIRED"},
+        )
+
+        passed, details = engine._test_logout_protocol("VCON-TEST-KEY")
+
+        self.assertFalse(passed)
+        self.assertIn("Expected DEVICE_UNBOUND", details)
+
+    def test_external_admin_logout_observation_is_included_in_report(self):
+        client = Mock()
+        client.get_current_key.return_value = "VCON-TEST-KEY"
+        client.get_hwid.return_value = "HWID-TEST"
+        client.get_tier.return_value = "Standard"
+        client.get_device_telemetry.return_value = {}
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=client,
+            live_config_loaded=True,
+        )
+
+        engine.record_external_test_result(
+            "Admin Panel Device Logout Propagation",
+            True,
+            "Admin-panel device logout was detected.",
+        )
+
+        report = engine.generate_report_text()
+        self.assertIn("Admin Panel Device Logout Propagation", report)
+        self.assertIn("[PASS]", report)
+
+    def test_admin_logout_callback_is_reported_without_changing_diagnostic_score(self):
+        client = Mock()
+        client.get_current_key.return_value = None
+        client.get_hwid.return_value = "HWID-TEST"
+        client.get_tier.return_value = "None"
+        client.get_device_telemetry.return_value = {}
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=client,
+            live_config_loaded=True,
+        )
+
+        is_admin_logout = record_session_revocation(
+            engine,
+            "Device binding was logged out or unlinked by administrator",
+            "session-1:admin-unbound",
+        )
+        report = engine.generate_report_text()
+
+        self.assertTrue(is_admin_logout)
+        self.assertEqual(engine.results, [])
+        self.assertIn("Overall Status  : [NO DIAGNOSTICS RUN]", report)
+        self.assertIn("OBSERVED SESSION EVENTS (not included in diagnostic score)", report)
+        self.assertIn("[OBSERVED] Admin Panel Device Logout", report)
+        self.assertIn("Score           : 0/0", report)
+
+    def test_duplicate_admin_logout_callbacks_are_deduplicated(self):
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=Mock(),
+            live_config_loaded=True,
+        )
+
+        for _ in range(3):
+            record_session_revocation(
+                engine,
+                "Device binding was logged out or unlinked by administrator",
+                "session-2:admin-unbound",
+            )
+
+        self.assertEqual(len(engine.observed_events), 1)
+        self.assertEqual(engine.results, [])
+
+    def test_revocation_report_uses_sanitized_details(self):
+        client = Mock()
+        client.get_current_key.return_value = None
+        client.get_hwid.return_value = "HWID-TEST"
+        client.get_tier.return_value = "None"
+        client.get_device_telemetry.return_value = {}
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=client,
+            live_config_loaded=True,
+        )
+        record_session_revocation(
+            engine,
+            "DEVICE_UNBOUND key=VCON-SECRET-KEY pin=1234",
+            "session-3:server-revoked",
+        )
+
+        report = engine.generate_report_text()
+
+        self.assertIn("Server Revocation", report)
+        self.assertNotIn("VCON-SECRET-KEY", report)
+        self.assertNotIn("1234", report)
+
+    def test_server_logout_stops_remaining_live_diagnostics(self):
+        client = Mock()
+        client.get_current_key.return_value = "VCON-TEST-KEY"
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=client,
+            live_config_loaded=True,
+        )
+        engine._test_environment = lambda: (engine.request_stop() or (True, "ok"))
+        engine._test_hardware_hwid = Mock(return_value=(True, "must not run"))
+
+        summary = engine.run_all_tests()
+
+        self.assertEqual(summary["failed"], 1)
+        self.assertIn("Diagnostic interrupted", [result["name"] for result in summary["results"]])
+        engine._test_hardware_hwid.assert_not_called()
 
 
 if __name__ == "__main__":

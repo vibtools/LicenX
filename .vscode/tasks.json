@@ -1,0 +1,75 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Temporary Phase 3 focused test",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"--import",
+				"tsx",
+				"--test",
+				"tests/deviceBinding.test.ts"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Temporary Phase 3 full Node tests",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"test"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Temporary Phase 3 TypeScript check",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"run",
+				"lint"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Temporary Phase 3 production build",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"run",
+				"build"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Temporary Phase 3 diff whitespace check",
+			"type": "shell",
+			"command": "git.exe",
+			"args": [
+				"diff",
+				"--check"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Temporary Phase 3 scoped diff review",
+			"type": "shell",
+			"command": "git.exe",
+			"args": [
+				"diff",
+				"--",
+				"src/server/api.ts",
+				"src/server/cloudflareHandler.ts",
+				"package.json"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

@@ -22,7 +22,7 @@ import platform
 import threading
 import datetime
 import traceback
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Callable
 from urllib.parse import urlsplit
 
 # ---------------------------------------------------------------------------
@@ -63,6 +63,41 @@ except ImportError:
 _PLACEHOLDER_HOSTS = {"example.com", "example.net", "example.org", "localhost"}
 _PLACEHOLDER_LABELS = {"demo", "example", "fake", "placeholder"}
 _RESERVED_SUFFIXES = (".example", ".invalid", ".local", ".localhost", ".test")
+DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS = 5
+ADMIN_LOGOUT_OBSERVATION_TIMEOUT_MS = 120000
+
+
+def create_diagnostic_client(
+    config: SDKConfig,
+    on_license_revoked: Optional[Callable[[str], None]] = None,
+) -> XLicenseClient:
+    """Use short polling only in the diagnostic tool, never in customer apps."""
+    config.ping_interval_seconds = DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS
+    config.enable_background_heartbeat = True
+    return XLicenseClient(config=config, on_license_revoked=on_license_revoked)
+
+
+def is_admin_device_logout_reason(reason: str) -> bool:
+    return "device binding was logged out or unlinked by administrator" in reason.casefold()
+
+
+def record_session_revocation(
+    engine: "DiagnosticEngine",
+    reason: str,
+    event_id: str,
+) -> bool:
+    """Record a sanitized session event independently of the diagnostic score."""
+    admin_logout = is_admin_device_logout_reason(reason)
+    engine.record_observed_session_event(
+        name="Admin Panel Device Logout" if admin_logout else "Server Revocation",
+        details=(
+            "Admin device unbind was received; the SDK cleared the local session."
+            if admin_logout
+            else "The server revoked or invalidated the session; the SDK cleared local state."
+        ),
+        event_id=event_id,
+    )
+    return admin_logout
 
 
 def load_live_config(config_path: str) -> SDKConfig:
@@ -184,6 +219,13 @@ class DiagnosticEngine:
         self.live_config_loaded = live_config_loaded
         self.logs: List[str] = []
         self.results: List[Dict[str, Any]] = []
+        self.observed_events: List[Dict[str, str]] = []
+        self._observed_event_ids = set()
+        self.stop_requested = threading.Event()
+
+    def request_stop(self) -> None:
+        """Stop before another live diagnostic can mutate the license state."""
+        self.stop_requested.set()
 
     def log(self, message: str, level: str = "INFO") -> None:
         ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -197,10 +239,29 @@ class DiagnosticEngine:
         line = f"[{ts}] {prefix} {message}"
         self.logs.append(line)
 
+    def record_external_test_result(self, name: str, passed: bool, details: str) -> None:
+        status = "PASS" if passed else "FAIL"
+        self.log(f"{name} -> {status}: {details}", status)
+        self.results.append({"name": name, "status": status, "details": details})
+
+    def record_observed_session_event(self, name: str, details: str, event_id: str) -> bool:
+        if event_id in self._observed_event_ids:
+            return False
+        self._observed_event_ids.add(event_id)
+        observed_at = datetime.datetime.now().isoformat(timespec="seconds")
+        self.observed_events.append({
+            "name": name,
+            "details": details,
+            "observed_at": observed_at,
+        })
+        self.logs.append(f"[{observed_at}] [OBSERVED] {name}: {details}")
+        return True
+
     def run_all_tests(self, callback=None) -> Dict[str, Any]:
         """Runs 12-stage forensic diagnostic test suite"""
         self.logs.clear()
         self.results.clear()
+        self.stop_requested.clear()
         start_time = time.time()
 
         if not self.live_config_loaded:
@@ -256,8 +317,8 @@ class DiagnosticEngine:
             ("TEST 8: Live License Validation Protocol", lambda: self._test_license_validation(active_key)),
             ("TEST 9: Cryptographic Signature & Tamper Resistance", lambda: self._test_crypto_signature(active_key)),
             ("TEST 10: Heartbeat Ping & Server Time Sync", lambda: self._test_heartbeat_ping(active_key)),
-            ("TEST 11: Local Storage Encryption & Anti-Rollback", self._test_storage_integrity),
-            ("TEST 12: Device Slot Release Protocol Check", self._test_logout_protocol),
+            ("TEST 11: Local Session Storage & Clock Guard", self._test_storage_integrity),
+            ("TEST 12: Logout & Device Slot Release", lambda: self._test_logout_protocol(active_key)),
         ]
 
         passed = 0
@@ -269,6 +330,13 @@ class DiagnosticEngine:
         }
 
         for idx, (name, test_func) in enumerate(tests, 1):
+            if self.stop_requested.is_set():
+                failed += 1
+                details = "A server-side logout/revocation interrupted diagnostics; remaining live tests were not run."
+                self.log(details, "FAIL")
+                self.results.append({"name": "Diagnostic interrupted", "status": "FAIL", "details": details})
+                break
+
             self.log(f"Starting {name}...", "STEP")
             if callback:
                 callback(idx, len(tests), name, "RUNNING")
@@ -305,7 +373,7 @@ class DiagnosticEngine:
         if failed > 0:
             self.log(f"WARNING: {failed} tests reported issues. Please inspect the log below.", "WARN")
         else:
-            self.log("ALL TESTS PASSED! SDK and backend integration are 100% healthy.", "PASS")
+            self.log("All diagnostic checks passed for this configured target; this does not certify production readiness.", "PASS")
         self.log("=" * 65, "INFO")
 
         return {
@@ -510,38 +578,42 @@ class DiagnosticEngine:
         return True, f"Heartbeat active ({latency_ms}ms, clock drift: {drift_sec:.2f}s)"
 
     def _test_storage_integrity(self) -> Tuple[bool, str]:
-        test_app = f"test_{int(time.time())}"
+        test_app = f"test_{time.time_ns()}"
         worker = BackgroundLicenseWorker(app_name=test_app)
         test_key = "VCON-STORAGE-TEST-1234"
         test_payload = {"status": "active", "tier": "TestTier", "created_at": time.time()}
 
-        # 1. Write
-        worker.save_session(test_key, test_payload)
+        try:
+            worker.save_session(test_key, test_payload)
+            if worker.load_saved_session() != test_key:
+                return False, "Session storage round-trip failed"
+        finally:
+            worker.clear_session()
 
-        # 2. Read back
-        loaded_key = worker.load_saved_session()
-        if loaded_key != test_key:
-            return False, f"Stored key mismatch: expected '{test_key}', got '{loaded_key}'"
+        if worker.load_saved_session() is not None:
+            return False, "Session storage cleanup failed"
 
-        # 3. Clean up
-        worker.clear_session()
-        cleared_key = worker.load_saved_session()
-        if cleared_key is not None:
-            return False, "Failed to clear session storage!"
+        now_ms = int(time.time() * 1000)
+        if OfflineGuard.is_clock_tampered(now_ms + 60000):
+            return False, "Clock guard rejected a timestamp within the allowed drift"
+        if not OfflineGuard.is_clock_tampered(now_ms + 16 * 60 * 1000):
+            return False, "Clock guard accepted a timestamp beyond the 15-minute limit"
 
-        return True, "Encrypted temporary storage and anti-rollback verified"
+        return True, "Session storage round-trip/cleanup and clock drift checks passed; storage is Base64-obfuscated, not encrypted"
 
-    def _test_logout_protocol(self) -> Tuple[bool, str]:
-        # We test that the logout URL can be resolved and communicates properly
-        logout_url = self.communicator._build_url("api/v1/license/logout")
-        status, _ = self.communicator._http_post(
-            logout_url,
-            {"license_key": "NON_EXISTENT_PROBE", "hwid": self.client.get_hwid(), "app_name": self.config.app_name},
-            5,
-        )
-        if status in (200, 400, 404):
-            return True, f"Logout endpoint verified: server accepted communication protocol (probe response HTTP {status})"
-        return False, f"Logout endpoint unreachable or unexpected HTTP {status}"
+    def _test_logout_protocol(self, active_key: Optional[str]) -> Tuple[bool, str]:
+        key = active_key or self.client.get_current_key()
+        if not key:
+            return False, "No active test session is available for logout verification"
+
+        if not self.client.logout(clear_saved_license=True):
+            return False, "SDK logout request failed; device-slot release was not confirmed"
+
+        is_active, data = self.communicator.ping_heartbeat(key, self.client.get_hwid())
+        if is_active or data.get("code") != "DEVICE_UNBOUND":
+            return False, f"Expected DEVICE_UNBOUND after logout; received {data.get('code', 'unknown')}"
+
+        return True, "SDK logout succeeded and a follow-up heartbeat confirmed DEVICE_UNBOUND; local session cleared"
 
     def generate_report_text(self) -> str:
         """Generates clean, structured diagnostic report text for sharing"""
@@ -554,15 +626,22 @@ class DiagnosticEngine:
         masked_key = f"{active_key[:8]}***" if active_key else "None"
 
         passed = sum(1 for r in self.results if r["status"] == "PASS")
+        failed = sum(1 for r in self.results if r["status"] == "FAIL")
         total = len(self.results)
         health = f"{round((passed / total) * 100, 1)}%" if total else "N/A"
+        if total == 0:
+            overall_status = "[NO DIAGNOSTICS RUN]"
+        elif failed:
+            overall_status = "[ISSUES DETECTED]"
+        else:
+            overall_status = "[DIAGNOSTICS PASSED]"
 
         report_lines = [
             sep,
             "       VCON / LicenX Python SDK Forensic Diagnostic Report",
             sep,
             f"Generated At    : {now_str}",
-            f"Overall Status  : {'[HEALTHY]' if passed == total and total > 0 else '[ISSUES DETECTED]'}",
+            f"Overall Status  : {overall_status}",
             f"Score           : {passed}/{total} Passed ({health})",
             "",
             "1. ENVIRONMENT & HARDWARE TELEMETRY:",
@@ -596,7 +675,19 @@ class DiagnosticEngine:
 
         report_lines.extend([
             "",
-            "4. COMPLETE EXECUTION LOG:",
+            "4. OBSERVED SESSION EVENTS (not included in diagnostic score):",
+            sub_sep,
+        ])
+        if self.observed_events:
+            for event in self.observed_events:
+                report_lines.append(f"[OBSERVED] {event['name']} at {event['observed_at']}")
+                report_lines.append(f"           Details: {event['details']}")
+        else:
+            report_lines.append("No session events observed during this console session.")
+
+        report_lines.extend([
+            "",
+            "5. COMPLETE EXECUTION LOG:",
             sub_sep,
         ])
         report_lines.extend(self.logs)
@@ -638,7 +729,10 @@ if HAS_TKINTER:
             # A live target must be selected explicitly; never inherit SDK localhost defaults.
             self.config = SDKConfig(server_url="", public_key_pem="", app_name="")
             self.config_loaded = False
-            self.client = XLicenseClient(config=self.config)
+            self._admin_logout_test_armed = False
+            self._admin_logout_test_after_id = None
+            self._session_generation = 0
+            self.client = create_diagnostic_client(self.config, self._on_license_revoked)
             self.engine = DiagnosticEngine(
                 config=self.config,
                 client=self.client,
@@ -902,6 +996,19 @@ if HAS_TKINTER:
             )
             self.lbl_tier_status.pack(anchor="w", pady=(2, 0))
 
+            self.btn_admin_logout_test = tk.Button(
+                status_frame,
+                text="Observe Admin Panel Logout (120 sec)",
+                font=("Helvetica", 8),
+                bg=self.c_card_border,
+                fg=self.c_text,
+                activebackground=self.c_input_bg,
+                relief="flat",
+                command=self._arm_admin_logout_test,
+                cursor="hand2",
+            )
+            self.btn_admin_logout_test.pack(anchor="w", pady=(6, 0))
+
             # 3. Diagnostic Test Action Card
             card_diag = tk.LabelFrame(
                 parent,
@@ -1034,6 +1141,7 @@ if HAS_TKINTER:
             self.btn_login.config(state=state)
             self.btn_autologin.config(state=state)
             self.btn_run_tests.config(state=state)
+            self.btn_admin_logout_test.config(state=state)
 
         def _append_log(self, text: str, tag: str = "INFO"):
             self.txt_logs.insert(tk.END, text + "\n", tag)
@@ -1069,7 +1177,7 @@ if HAS_TKINTER:
                 self.config_loaded = False
                 self._set_config_actions_enabled(False)
                 self.config = SDKConfig(server_url="", public_key_pem="", app_name="")
-                self.client = XLicenseClient(config=self.config)
+                self.client = create_diagnostic_client(self.config, self._on_license_revoked)
                 self.engine = DiagnosticEngine(
                     config=self.config,
                     client=self.client,
@@ -1086,7 +1194,7 @@ if HAS_TKINTER:
                 try:
                     config = load_live_config(path)
                     self.config = config
-                    self.client = XLicenseClient(config=self.config)
+                    self.client = create_diagnostic_client(self.config, self._on_license_revoked)
                     self.engine = DiagnosticEngine(
                         config=self.config,
                         client=self.client,
@@ -1137,6 +1245,11 @@ if HAS_TKINTER:
             threading.Thread(target=run, daemon=True).start()
 
         def _handle_logout(self):
+            if self._admin_logout_test_armed:
+                self._finish_admin_logout_test(
+                    False,
+                    "The local user ended the session before an admin-panel logout was observed.",
+                )
             curr_key = self.client.get_current_key()
             if not curr_key:
                 messagebox.showinfo("Logout", "No active license session is currently logged in.")
@@ -1144,13 +1257,93 @@ if HAS_TKINTER:
 
             if messagebox.askyesno("Confirm Logout", "Unbind this hardware device and release the slot on the server?"):
                 success = self.client.logout(clear_saved_license=True)
-                self.lbl_auth_status.config(text="\u25cf Status: Logged Out", fg=self.c_rose)
+                self.lbl_auth_status.config(
+                    text="\u25cf Status: Logged Out" if success else "\u25cf Status: Logout Unconfirmed",
+                    fg=self.c_rose if success else self.c_amber,
+                )
                 self.lbl_tier_status.config(text="Tier: None | Slots: -/- | Expires: -")
-                self._append_log("Device successfully logged out. Hardware slot released on server.", "PASS")
+                self._append_log(
+                    "Logout endpoint accepted the request; full diagnostics separately verify the slot is unbound."
+                    if success
+                    else "Local session cleared, but the server did not confirm the logout request.",
+                    "PASS" if success else "FAIL",
+                )
+
+        def _arm_admin_logout_test(self):
+            if not self.client.is_authenticated() or not self.client.get_current_key():
+                messagebox.showwarning("Test Session Required", "Log in with a dedicated staging test license first.")
+                return
+            if self.is_running_tests:
+                messagebox.showwarning("Diagnostics Running", "Wait for full diagnostics to finish first.")
+                return
+            if self._admin_logout_test_armed:
+                return
+
+            self._admin_logout_test_armed = True
+            self.btn_admin_logout_test.config(state="disabled", text="Waiting for Admin Panel Logout...")
+            self._append_log(
+                "Admin logout observation armed for 120 seconds. Log out/unlink this device in the admin panel now; the SDK should detect it on its next 5-second heartbeat.",
+                "STEP",
+            )
+            self._admin_logout_test_after_id = self.after(
+                ADMIN_LOGOUT_OBSERVATION_TIMEOUT_MS,
+                self._admin_logout_test_timed_out,
+            )
+
+        def _admin_logout_test_timed_out(self):
+            self._finish_admin_logout_test(
+                False,
+                "No admin-triggered DEVICE_UNBOUND response was observed within 120 seconds.",
+            )
+
+        def _finish_admin_logout_test(self, passed: bool, details: str):
+            if not self._admin_logout_test_armed:
+                return
+            self._admin_logout_test_armed = False
+            if self._admin_logout_test_after_id is not None:
+                self.after_cancel(self._admin_logout_test_after_id)
+                self._admin_logout_test_after_id = None
+            self.btn_admin_logout_test.config(
+                state="normal" if self.config_loaded else "disabled",
+                text="Observe Admin Panel Logout (120 sec)",
+            )
+            self.engine.record_external_test_result(
+                "Admin Panel Device Logout Propagation",
+                passed,
+                details,
+            )
+            self._append_log(details, "PASS" if passed else "FAIL")
+
+        def _on_license_revoked(self, reason: str):
+            if self.is_running_tests:
+                self.engine.request_stop()
+            try:
+                self.after(0, lambda: self._handle_license_revoked(reason))
+            except RuntimeError:
+                pass
+
+        def _handle_license_revoked(self, reason: str):
+            event_id = f"{self._session_generation}:{'admin-unbound' if is_admin_device_logout_reason(reason) else 'server-revoked'}"
+            admin_logout = record_session_revocation(self.engine, reason, event_id)
+            if self._admin_logout_test_armed:
+                self._finish_admin_logout_test(
+                    admin_logout,
+                    "Admin-panel device logout was detected; SDK cleared the local session."
+                    if admin_logout
+                    else f"The server ended the session for another reason, not DEVICE_UNBOUND: {reason}",
+                )
+
+            self.lbl_auth_status.config(
+                text="\u25cf Logged Out by Admin" if admin_logout else "\u25cf Session Ended by Server",
+                fg=self.c_rose if admin_logout else self.c_amber,
+            )
+            self.lbl_tier_status.config(text="Tier: None | Slots: -/- | Expires: -")
+            self._append_log(f"Server revoked/unbound this session: {reason}", "PASS" if admin_logout else "WARN")
 
         def _update_auth_ui(self, res: LoginResult):
             self.btn_login.config(state="normal", text="\U0001f511 Login / Activate")
             if res.success:
+                self._session_generation += 1
                 info = self.client.get_license_info() or {}
                 tier = info.get("tier", "Standard")
                 bound = info.get("bound_devices_count", 1)
@@ -1172,7 +1365,15 @@ if HAS_TKINTER:
             if not self.client.get_current_key():
                 messagebox.showwarning("Test License Required", "Activate a dedicated test license first.")
                 return
+            if self._admin_logout_test_armed:
+                messagebox.showwarning("Admin Logout Test Running", "Finish or wait for the admin logout observation first.")
+                return
             if self.is_running_tests:
+                return
+            if not messagebox.askyesno(
+                "Full Diagnostic Test",
+                "The final diagnostic step will log out this test session and verify that its device slot is released. Continue?",
+            ):
                 return
 
             self.is_running_tests = True
@@ -1217,8 +1418,11 @@ if HAS_TKINTER:
                 text=f"Diagnostic Finished: {passed}/{total} Passed ({summary['health_pct']}%) in {summary['duration']}s"
             )
 
+            if not self.client.is_authenticated():
+                self.lbl_auth_status.config(text="\u25cf Status: Logged Out by Diagnostic", fg=self.c_rose)
+                self.lbl_tier_status.config(text="Tier: None | Slots: -/- | Expires: -")
             if summary["failed"] == 0:
-                messagebox.showinfo("Diagnostic Complete", f"All {total} tests passed successfully!\n\nSDK & backend integration are 100% healthy.")
+                messagebox.showinfo("Diagnostic Complete", f"All {total} diagnostics passed for this target.\n\nThis is not production-readiness certification.")
             else:
                 messagebox.showwarning(
                     "Issues Detected",
@@ -1267,12 +1471,21 @@ def run_cli_mode():
         print(f"[ERROR] Live config rejected: {exc}")
         sys.exit(1)
 
-    client = XLicenseClient(config=cfg)
+    engine: Optional[DiagnosticEngine] = None
+
+    def on_license_revoked(reason: str):
+        print(f"\n[!] Server ended the test session: {reason}")
+        if engine:
+            record_session_revocation(engine, reason, "cli-session-revocation")
+            engine.request_stop()
+
+    client = create_diagnostic_client(cfg, on_license_revoked=on_license_revoked)
     engine = DiagnosticEngine(config=cfg, client=client, live_config_loaded=True)
 
     print(f"[*] Target Server URL : {cfg.server_url}")
     print(f"[*] Target App Scope  : {cfg.app_name}")
     print(f"[*] Device HWID       : {client.get_hwid()}")
+    print("[!] Full diagnostics log out the test session and clear its saved local key at the final stage.")
     print("-" * 70)
 
     # Activation is explicit so the exit hook can release the test device.

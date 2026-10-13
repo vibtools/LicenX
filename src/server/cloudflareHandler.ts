@@ -20,6 +20,8 @@ import {
   recordFailedUserControlPinAttempt,
 } from "./userControlRateLimit.js";
 
+const SAFE_SERVER_ERROR = "Internal server error";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -111,7 +113,7 @@ async function verifyAdminAuth(
   } catch (error: any) {
     return {
       authorized: false,
-      error: error.message || "Authentication check failed",
+      error: SAFE_SERVER_ERROR,
     };
   }
 }
@@ -2471,9 +2473,9 @@ export async function handleCloudflareApi(
       404,
     );
   } catch (error: any) {
-    console.error("[Cloudflare API Error]:", error);
+    console.error("[Cloudflare API Error]: Internal server error");
     return jsonResponse(
-      { error: error.message || "Internal server error" },
+      { error: SAFE_SERVER_ERROR },
       500,
     );
   }

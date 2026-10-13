@@ -24,6 +24,7 @@ import {
   recordFailedUserControlPinAttempt,
 } from "./userControlRateLimit.js";
 const archiver = (archiverModule as any).default || archiverModule;
+const SAFE_SERVER_ERROR = "Internal server error";
 
 export const apiRouter = Router();
 
@@ -89,8 +90,8 @@ async function requireAdminAuth(
 
     (req as any).adminUser = session.username;
     next();
-  } catch (error: any) {
-    res.status(500).json({ error: "Authentication check failed" });
+  } catch {
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 }
 
@@ -136,10 +137,8 @@ apiRouter.get("/setup/status", async (req: Request, res: Response) => {
       hasTursoEnv: hasTurso,
       serverTime: Date.now(),
     });
-  } catch (error: any) {
-    res
-      .status(500)
-      .json({ error: error.message || "Failed to check setup status" });
+  } catch {
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -203,8 +202,8 @@ apiRouter.post("/setup/init", async (req: Request, res: Response) => {
       username: username.trim(),
       publicKeyPem: keypair.publicKeyPem,
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || "Initialization failed" });
+  } catch {
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -253,7 +252,7 @@ apiRouter.post("/auth/login", async (req: Request, res: Response) => {
       username: row.username,
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Login failed" });
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -276,7 +275,7 @@ apiRouter.get(
         r2Configured: row && row.r2_config_json ? true : false,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to fetch user" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -342,7 +341,7 @@ apiRouter.post(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to update credentials" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -408,7 +407,7 @@ apiRouter.get(
         offset: Number(offset),
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to fetch apps" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -487,7 +486,7 @@ apiRouter.post(
         },
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to create app" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -537,7 +536,7 @@ apiRouter.patch(
 
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to update app" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -559,7 +558,7 @@ apiRouter.delete(
 
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to delete app" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -601,7 +600,7 @@ apiRouter.post(
 
       res.json({ success: true, affected: ids.length });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Bulk action failed" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -656,7 +655,7 @@ apiRouter.get(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to generate config" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -761,7 +760,7 @@ apiRouter.get(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to fetch licenses" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -839,7 +838,7 @@ apiRouter.post(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to create license" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -982,7 +981,7 @@ apiRouter.post(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Bulk generation failed" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1062,7 +1061,7 @@ apiRouter.patch(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to update license" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1089,7 +1088,7 @@ apiRouter.delete(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to delete license" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1153,7 +1152,7 @@ apiRouter.post(
 
       res.json({ success: true, affected: ids.length });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Bulk action failed" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1175,7 +1174,7 @@ apiRouter.get(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to fetch devices" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1196,7 +1195,7 @@ apiRouter.delete(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to reset devices" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1259,7 +1258,7 @@ apiRouter.get(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to fetch devices" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1276,7 +1275,7 @@ apiRouter.delete(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to unbind device" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1337,7 +1336,7 @@ apiRouter.post(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to check license" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1464,7 +1463,7 @@ apiRouter.post("/v1/user/control/open", async (req: Request, res: Response) => {
   } catch (error: any) {
     res
       .status(500)
-      .json({ error: error.message || "Failed to open license analysis" });
+      .json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -1577,7 +1576,7 @@ apiRouter.post(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to reset devices" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1610,7 +1609,7 @@ apiRouter.get("/v1/public-key", async (req: Request, res: Response) => {
   } catch (error: any) {
     res
       .status(500)
-      .json({ error: error.message || "Failed to get public key" });
+      .json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -1978,7 +1977,7 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
       public_key: publicKeyPem,
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Validation error" });
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -2055,7 +2054,7 @@ apiRouter.post("/v1/license/ping", async (req: Request, res: Response) => {
       server_time: now,
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Ping failed" });
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -2112,7 +2111,7 @@ const handleLogoutOrDeactivate = async (req: Request, res: Response) => {
       message: "Device logged out and HWID slot released successfully",
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Logout failed" });
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 };
 
@@ -2146,8 +2145,8 @@ apiRouter.get("/sdk/download/python", (req: Request, res: Response) => {
         ? new ZipClass({ zlib: { level: 9 } })
         : (ZipClass as any)("zip", { zlib: { level: 9 } });
 
-    archive.on("error", (err: any) => {
-      res.status(500).send({ error: err.message });
+    archive.on("error", () => {
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     });
 
     archive.pipe(res);
@@ -2164,7 +2163,7 @@ apiRouter.get("/sdk/download/python", (req: Request, res: Response) => {
     });
     archive.finalize();
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Failed to download SDK" });
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -2207,7 +2206,7 @@ apiRouter.get(
         serverTime: Date.now(),
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to fetch stats" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2235,7 +2234,7 @@ apiRouter.get(
 
       res.json({ logs: result.rows });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to fetch logs" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2249,7 +2248,7 @@ apiRouter.delete(
       await db.execute("DELETE FROM validation_logs");
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to clear logs" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2308,7 +2307,7 @@ apiRouter.get(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to get settings" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2370,7 +2369,7 @@ apiRouter.post(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to save R2 config" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2418,7 +2417,7 @@ apiRouter.post(
     } catch (error: any) {
       res
         .status(500)
-        .json({ success: false, message: error.message || "Test failed" });
+        .json({ success: false, message: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2434,7 +2433,7 @@ apiRouter.get(
       );
       res.json({ backups: result.rows });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to get backups" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2457,7 +2456,7 @@ apiRouter.post(
         publicKeyPem: keypair.publicKeyPem,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Key rotation failed" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2513,7 +2512,7 @@ apiRouter.get("/public/site-settings", async (req: Request, res: Response) => {
   } catch (error: any) {
     res
       .status(500)
-      .json({ error: error.message || "Failed to fetch public site settings" });
+      .json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -2555,7 +2554,7 @@ apiRouter.get(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to fetch site settings" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2596,7 +2595,7 @@ apiRouter.post(
     } catch (error: any) {
       res
         .status(500)
-        .json({ error: error.message || "Failed to save site settings" });
+        .json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2673,7 +2672,7 @@ apiRouter.post(
         key,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Upload failed" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2732,7 +2731,7 @@ apiRouter.get(
       );
       res.send(Buffer.from(fileRes.data));
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to fetch asset" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
