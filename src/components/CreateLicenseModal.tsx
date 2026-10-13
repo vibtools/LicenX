@@ -7,9 +7,6 @@ import {
   CheckCircle2,
   Copy,
   Check,
-  ShieldCheck,
-  AppWindow,
-  RotateCcw,
 } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { License, AppItem } from '../types';

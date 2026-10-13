@@ -18,6 +18,7 @@ import {
   Shield,
   AppWindow,
   Globe,
+  Webhook,
 } from 'lucide-react';
 import { ActiveTab, SiteSettings } from '../types';
 
@@ -138,6 +139,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Administration',
       icon: <Settings className="w-3.5 h-3.5" />,
       items: [
+        {
+          id: 'admin-apis',
+          label: 'Admin APIs',
+          icon: <Webhook className="w-3.5 h-3.5" />,
+        },
         {
           id: 'profile',
           label: 'Admin Profile',

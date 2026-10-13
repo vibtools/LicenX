@@ -107,8 +107,31 @@ export type ActiveTab =
   | 'simulator'
   | 'code'
   | 'profile'
+  | 'admin-apis'
   | 'site-settings'
   | 'settings';
+
+export interface AdminApiKeyRecord {
+  id: string;
+  name: string;
+  key_prefix: string;
+  permissions_json: string;
+  app_id: string | null;
+  last_used_at: number | null;
+  status: string;
+  created_at: number;
+}
+
+export interface CreatedAdminApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  secret: string;
+  permissions: string[];
+  app_id: string | null;
+  status: string;
+  created_at: number;
+}
 
 export interface SiteSettings {
   siteName: string;

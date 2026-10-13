@@ -13,6 +13,7 @@ import { LogsTab } from './components/LogsTab';
 import { SimulatorTab } from './components/SimulatorTab';
 import { ClientCodeTab } from './components/ClientCodeTab';
 import { ProfileTab } from './components/ProfileTab';
+import { AdminApisTab } from './components/AdminApisTab';
 import { SiteSettingsTab } from './components/SiteSettingsTab';
 import { SettingsTab } from './components/SettingsTab';
 import { CreateLicenseModal } from './components/CreateLicenseModal';
@@ -48,6 +49,7 @@ export default function App() {
     'simulator',
     'code',
     'profile',
+    'admin-apis',
     'site-settings',
     'settings',
   ];
@@ -65,6 +67,7 @@ export default function App() {
     if (path.includes('/logs') || path.includes('/log') || path.includes('/audit')) return 'logs';
     if (path.includes('/simulator') || path.includes('/validator')) return 'simulator';
     if (path.includes('/code') || path.includes('/sdk')) return 'code';
+    if (path.includes('/admin-apis') || path.includes('/api-keys')) return 'admin-apis';
     if (path.includes('/profile')) return 'profile';
     if (path.includes('/overview') || path.includes('/dashboard')) return 'overview';
 
@@ -444,6 +447,12 @@ export default function App() {
             <ProfileTab
               username={username}
               onUsernameUpdated={(newU) => setUsername(newU)}
+            />
+          )}
+
+          {activeTab === 'admin-apis' && (
+            <AdminApisTab
+              onNavigateToTab={(tab) => handleTabChange(tab as ActiveTab)}
             />
           )}
 

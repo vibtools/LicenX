@@ -51,6 +51,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
     simulator: 'API Simulator',
     code: 'SDK Hub',
     profile: 'Admin Profile',
+    'admin-apis': 'Admin APIs Hub',
     'site-settings': 'Site Settings',
     settings: 'System Settings',
   };

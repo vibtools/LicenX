@@ -1,4 +1,4 @@
-import { SetupStatus, SystemStats, License, Device, ValidationLog, R2Config, R2Backup, AppItem, SiteSettings } from '../types';
+import { SetupStatus, SystemStats, License, Device, ValidationLog, R2Config, R2Backup, AppItem, SiteSettings, AdminApiKeyRecord, CreatedAdminApiKey } from '../types';
 
 const TOKEN_KEY = 'vcon_admin_token';
 
@@ -403,7 +403,19 @@ export const api = {
     setCached(key, data);
     return data;
   },
-  getSiteSettings: () => request<{ siteSettings: SiteSettings; r2Configured: boolean }>('/api/settings/site'),
+  // Admin API Keys Management
+  getAdminApiKeys: () => request<{ success: boolean; keys: AdminApiKeyRecord[] }>('/api/admin-api-keys'),
+  createAdminApiKey: (data: { name: string; prefix?: string; permissions?: string[]; app_id?: string | null }) =>
+    request<{ success: boolean; key: CreatedAdminApiKey }>('/api/admin-api-keys', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  deleteAdminApiKey: (id: string) =>
+    request<{ success: boolean; message: string }>(`/api/admin-api-keys/${id}`, {
+      method: 'DELETE',
+    }),
+
+    getSiteSettings: () => request<{ siteSettings: SiteSettings; r2Configured: boolean }>('/api/settings/site'),
   saveSiteSettings: async (data: Partial<SiteSettings>) => {
     invalidateCache('public_site_settings');
     return request<{ success: boolean; siteSettings: SiteSettings }>('/api/settings/site', {

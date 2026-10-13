@@ -8,7 +8,9 @@ import {
   createSessionToken,
   generateLicenseKey,
   generateLicensePin,
+  generateAdminApiKey,
   generateRSAKeyPair,
+  hashAdminApiSecret,
   hashPassword,
   signPayload,
   verifyPassword,
@@ -2737,3 +2739,472 @@ apiRouter.get(
   },
 );
 
+
+
+// -------------------------------------------------------------
+// EXTERNAL STORE REST API ENDPOINTS (/api/v1/admin/*)
+// -------------------------------------------------------------
+
+// Middleware: Authenticate Admin API Key with granular scope verification
+// In-memory sliding rate limit tracker for external Admin APIs (120 req/min per key/IP)
+const adminApiRateLimits = new Map<string, { count: number; windowStart: number }>();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = 120;
+
+export function requireAdminApiKey(requiredScope?: string) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      // 1. IP / Key Sliding Window Rate Limit Check
+      const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "unknown";
+      const now = Date.now();
+      const rateLimitKey = "admin_api_" + clientIp;
+      const rateEntry = adminApiRateLimits.get(rateLimitKey);
+
+      if (rateEntry) {
+        if (now - rateEntry.windowStart < RATE_LIMIT_WINDOW_MS) {
+          if (rateEntry.count >= RATE_LIMIT_MAX_REQUESTS) {
+            res.setHeader("Retry-After", "60");
+            res.status(429).json({
+              success: false,
+              error: "Too Many Requests: Rate limit exceeded (max 120 requests/minute). Please slow down.",
+            });
+            return;
+          }
+          rateEntry.count += 1;
+        } else {
+          adminApiRateLimits.set(rateLimitKey, { count: 1, windowStart: now });
+        }
+      } else {
+        adminApiRateLimits.set(rateLimitKey, { count: 1, windowStart: now });
+      }
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.status(401).json({
+          success: false,
+          error: "Unauthorized: Missing or malformed Bearer token in Authorization header",
+        });
+        return;
+      }
+
+      const secret = authHeader.substring(7).trim();
+      if (!secret || !secret.startsWith("vcon_sec_")) {
+        res.status(401).json({
+          success: false,
+          error: "Unauthorized: Invalid Admin API secret key format",
+        });
+        return;
+      }
+
+      const secretHash = hashAdminApiSecret(secret);
+      const db = getDbClient();
+      const result = await db.execute({
+        sql: "SELECT id, name, key_prefix, secret_hash, permissions_json, app_id, status FROM admin_api_keys WHERE secret_hash = ? LIMIT 1",
+        args: [secretHash],
+      });
+
+      if (result.rows.length === 0) {
+        res.status(401).json({
+          success: false,
+          error: "Unauthorized: Invalid Admin API secret key",
+        });
+        return;
+      }
+
+      const apiKey = result.rows[0];
+      if (apiKey.status !== "active") {
+        res.status(403).json({
+          success: false,
+          error: "Forbidden: Admin API key is " + apiKey.status,
+        });
+        return;
+      }
+
+      if (requiredScope) {
+        let permissions: string[] = [];
+        try {
+          permissions = JSON.parse((apiKey.permissions_json as string) || "[]");
+        } catch {
+          permissions = [];
+        }
+
+        if (!permissions.includes(requiredScope) && !permissions.includes("admin:*")) {
+          res.status(403).json({
+            success: false,
+            error: "Forbidden: API key lacks required scope " + requiredScope,
+          });
+          return;
+        }
+      }
+
+      // Update last_used_at timestamp asynchronously
+      db.execute({
+        sql: "UPDATE admin_api_keys SET last_used_at = ? WHERE id = ?",
+        args: [Date.now(), apiKey.id],
+      }).catch((err) => {
+        console.error("[Admin API Key] Failed to update last_used_at:", err);
+      });
+
+      (req as any).adminApiKey = {
+        id: apiKey.id,
+        name: apiKey.name,
+        key_prefix: apiKey.key_prefix,
+        app_id: apiKey.app_id || null,
+      };
+
+      next();
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to authenticate Admin API key",
+      });
+    }
+  };
+}
+
+// 1. Create License (for external store checkout / webhook integration)
+apiRouter.post(
+  "/v1/admin/licenses",
+  requireAdminApiKey("licenses:create"),
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        key,
+        prefix = "VCON",
+        tier = "Standard",
+        app_id = null,
+        device_limit = 1,
+        validity_type = "lifetime",
+        validity_value = 0,
+        customer_name = "",
+        customer_email = "",
+        notes = "",
+        expires_at = null,
+      } = req.body;
+
+      const db = getDbClient();
+      const finalKey = key ? key.trim().toUpperCase() : generateLicenseKey(prefix);
+      const pin = generateLicensePin();
+      const id = "lic_" + crypto.randomBytes(8).toString("hex");
+      const now = Date.now();
+      const computedExpiresAt = expires_at;
+
+      await db.execute({
+        sql: "INSERT INTO licenses (id, key, status, tier, app_id, device_limit, validity_type, validity_value, activated_at, expires_at, created_at, customer_name, customer_email, notes, pin) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+        args: [
+          id,
+          finalKey,
+          tier,
+          app_id ? String(app_id).trim() : null,
+          Number(device_limit) || 1,
+          validity_type,
+          Number(validity_value) || 0,
+          computedExpiresAt,
+          now,
+          customer_name || null,
+          customer_email || null,
+          notes || null,
+          pin,
+        ],
+      });
+
+      res.status(201).json({
+        success: true,
+        license: {
+          id,
+          key: finalKey,
+          pin,
+          status: "active",
+          tier,
+          app_id: app_id || null,
+          device_limit: Number(device_limit) || 1,
+          validity_type,
+          validity_value: Number(validity_value) || 0,
+          expires_at: computedExpiresAt,
+          created_at: now,
+          customer_name: customer_name || null,
+          customer_email: customer_email || null,
+          notes: notes || null,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to create license via Admin API",
+      });
+    }
+  },
+);
+
+// 2. Get License Details & PIN
+apiRouter.get(
+  "/v1/admin/licenses/:key",
+  requireAdminApiKey("licenses:read"),
+  async (req: Request, res: Response) => {
+    try {
+      const { key } = req.params;
+      if (!key) {
+        res.status(400).json({ success: false, error: "Missing license key" });
+        return;
+      }
+
+      const cleanKey = key.trim().toUpperCase();
+      const db = getDbClient();
+      const licRes = await db.execute({
+        sql: "SELECT id, key, status, tier, app_id, device_limit, validity_type, validity_value, activated_at, expires_at, created_at, customer_name, customer_email, notes, pin FROM licenses WHERE key = ? LIMIT 1",
+        args: [cleanKey],
+      });
+
+      if (licRes.rows.length === 0) {
+        res.status(404).json({ success: false, error: "License not found" });
+        return;
+      }
+
+      const lic = licRes.rows[0];
+      const now = Date.now();
+      let currentStatus = lic.status as string;
+
+      if (lic.expires_at && now > Number(lic.expires_at) && currentStatus === "active") {
+        currentStatus = "expired";
+        await db.execute({
+          sql: "UPDATE licenses SET status = 'expired' WHERE id = ?",
+          args: [lic.id],
+        });
+      }
+
+      const devicesRes = await db.execute({
+        sql: "SELECT id, hwid, device_name, os_info, ip_address, first_bound_at, last_ping_at, status FROM devices WHERE license_id = ? AND status = 'active' ORDER BY last_ping_at DESC, first_bound_at DESC",
+        args: [lic.id],
+      });
+
+      res.json({
+        success: true,
+        license: {
+          id: lic.id,
+          key: lic.key,
+          pin: lic.pin,
+          status: currentStatus,
+          tier: lic.tier,
+          app_id: lic.app_id || null,
+          device_limit: Number(lic.device_limit),
+          bound_devices_count: devicesRes.rows.length,
+          validity_type: lic.validity_type,
+          validity_value: Number(lic.validity_value),
+          activated_at: lic.activated_at ? Number(lic.activated_at) : null,
+          expires_at: lic.expires_at ? Number(lic.expires_at) : null,
+          created_at: Number(lic.created_at),
+          customer_name: lic.customer_name || null,
+          customer_email: lic.customer_email || null,
+          notes: lic.notes || null,
+          devices: devicesRes.rows,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to fetch license details via Admin API",
+      });
+    }
+  },
+);
+
+// 3. Reset License Devices (Unbind Slots)
+apiRouter.post(
+  "/v1/admin/licenses/:key/reset",
+  requireAdminApiKey("licenses:manage"),
+  async (req: Request, res: Response) => {
+    try {
+      const { key } = req.params;
+      if (!key) {
+        res.status(400).json({ success: false, error: "Missing license key" });
+        return;
+      }
+
+      const cleanKey = key.trim().toUpperCase();
+      const db = getDbClient();
+      const licRes = await db.execute({
+        sql: "SELECT id FROM licenses WHERE key = ? LIMIT 1",
+        args: [cleanKey],
+      });
+
+      if (licRes.rows.length === 0) {
+        res.status(404).json({ success: false, error: "License not found" });
+        return;
+      }
+
+      const licId = licRes.rows[0].id as string;
+      const deleteRes = await db.execute({
+        sql: "DELETE FROM devices WHERE license_id = ?",
+        args: [licId],
+      });
+
+      res.json({
+        success: true,
+        message: "All devices unbound successfully. License is fresh and ready for new hardware.",
+        reset_devices_count: deleteRes.rowsAffected ?? 0,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to reset license devices via Admin API",
+      });
+    }
+  },
+);
+
+// 4. Update License Status (Suspend / Revoke / Activate)
+apiRouter.patch(
+  "/v1/admin/licenses/:key/status",
+  requireAdminApiKey("licenses:manage"),
+  async (req: Request, res: Response) => {
+    try {
+      const { key } = req.params;
+      const { status } = req.body;
+
+      if (!key) {
+        res.status(400).json({ success: false, error: "Missing license key" });
+        return;
+      }
+
+      const validStatuses = ["active", "suspended", "revoked", "expired"];
+      if (!status || !validStatuses.includes(status)) {
+        res.status(400).json({
+          success: false,
+          error: "Invalid status. Must be one of: " + validStatuses.join(", "),
+        });
+        return;
+      }
+
+      const cleanKey = key.trim().toUpperCase();
+      const db = getDbClient();
+      const licRes = await db.execute({
+        sql: "SELECT id, status FROM licenses WHERE key = ? LIMIT 1",
+        args: [cleanKey],
+      });
+
+      if (licRes.rows.length === 0) {
+        res.status(404).json({ success: false, error: "License not found" });
+        return;
+      }
+
+      const licId = licRes.rows[0].id as string;
+      await db.execute({
+        sql: "UPDATE licenses SET status = ? WHERE id = ?",
+        args: [status, licId],
+      });
+
+      res.json({
+        success: true,
+        message: "License status updated to " + status,
+        license_key: cleanKey,
+        status,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to update license status via Admin API",
+      });
+    }
+  },
+);
+
+// -------------------------------------------------------------
+// ADMIN PANEL API KEY MANAGEMENT ENDPOINTS (Session Authenticated)
+// -------------------------------------------------------------
+
+// List all API keys
+apiRouter.get(
+  "/admin-api-keys",
+  requireAdminAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const db = getDbClient();
+      const result = await db.execute(
+        "SELECT id, name, key_prefix, permissions_json, app_id, last_used_at, status, created_at FROM admin_api_keys ORDER BY created_at DESC"
+      );
+      res.json({
+        success: true,
+        keys: result.rows,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch Admin API keys" });
+    }
+  }
+);
+
+// Create new API key
+apiRouter.post(
+  "/admin-api-keys",
+  requireAdminAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        name,
+        prefix = "live",
+        permissions = ["licenses:create", "licenses:read", "licenses:manage"],
+        app_id = null,
+      } = req.body;
+
+      if (!name || typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ error: "Key name is required" });
+        return;
+      }
+
+      const generated = generateAdminApiKey(prefix);
+      const db = getDbClient();
+      const now = Date.now();
+      const permsJson = JSON.stringify(
+        Array.isArray(permissions) && permissions.length > 0
+          ? permissions
+          : ["licenses:create", "licenses:read", "licenses:manage"]
+      );
+
+      await db.execute({
+        sql: "INSERT INTO admin_api_keys (id, name, key_prefix, secret_hash, permissions_json, app_id, last_used_at, status, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, 'active', ?)",
+        args: [
+          generated.id,
+          name.trim(),
+          generated.keyPrefix,
+          generated.secretHash,
+          permsJson,
+          app_id ? String(app_id).trim() : null,
+          now,
+        ],
+      });
+
+      res.status(201).json({
+        success: true,
+        key: {
+          id: generated.id,
+          name: name.trim(),
+          key_prefix: generated.keyPrefix,
+          secret: generated.secret, // Only returned ONCE upon creation!
+          permissions: JSON.parse(permsJson),
+          app_id: app_id ? String(app_id).trim() : null,
+          status: "active",
+          created_at: now,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to create Admin API key" });
+    }
+  }
+);
+
+// Revoke/Delete API key
+apiRouter.delete(
+  "/admin-api-keys/:id",
+  requireAdminAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const db = getDbClient();
+      await db.execute({
+        sql: "DELETE FROM admin_api_keys WHERE id = ?",
+        args: [id],
+      });
+      res.json({ success: true, message: "Admin API key deleted successfully" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to delete Admin API key" });
+    }
+  }
+);
