@@ -36,7 +36,9 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
 
   // Result state after creation - popup does NOT close
   const [createdLicense, setCreatedLicense] = useState<License | null>(null);
+  const [createdLicensesList, setCreatedLicensesList] = useState<License[]>([]);
   const [copied, setCopied] = useState(false);
+  const [copiedKeyOnly, setCopiedKeyOnly] = useState(false);
 
   useEffect(() => {
     api.getApps().then((res) => {
@@ -55,7 +57,7 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
     setError('');
 
     try {
-      const res = await api.createLicense({
+      const res: any = await api.createLicense({
         key: customKey.trim() || undefined,
         prefix: prefix.trim(),
         tier,
@@ -68,8 +70,30 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
         notes: notes.trim() || null,
       });
 
-      setCreatedLicense(res.license);
-      onCreated(res.license);
+      // Robustly handle response shape (handles res.license, res.licenses, or direct license payload from Cloudflare/Node)
+      let resolvedLicense: License | null = null;
+      let list: License[] = [];
+
+      if (res?.license && typeof res.license === 'object') {
+        resolvedLicense = res.license;
+      } else if (res?.key) {
+        resolvedLicense = res as License;
+      }
+
+      if (Array.isArray(res?.licenses) && res.licenses.length > 0) {
+        list = res.licenses;
+        if (!resolvedLicense) resolvedLicense = res.licenses[0];
+      } else if (resolvedLicense) {
+        list = [resolvedLicense];
+      }
+
+      if (resolvedLicense) {
+        setCreatedLicense(resolvedLicense);
+        setCreatedLicensesList(list);
+        onCreated(resolvedLicense);
+      } else {
+        throw new Error('License was created, but response data could not be parsed.');
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to generate license');
     } finally {
@@ -77,16 +101,34 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
     }
   };
 
-  const getCopyText = (lic: License) => {
-    if (lic.pin) {
-      return `${lic.key} PIN: ${lic.pin}`;
+  const getAllKeysText = () => {
+    if (createdLicensesList.length > 0) {
+      return createdLicensesList.map((lic) => lic.key).join('\n');
     }
-    return lic.key;
+    return createdLicense?.key || '';
   };
 
-  const handleCopy = () => {
-    if (!createdLicense) return;
-    const text = getCopyText(createdLicense);
+  const getAllCredentialsText = () => {
+    if (createdLicensesList.length > 0) {
+      return createdLicensesList
+        .map((lic) => (lic.pin ? `${lic.key} PIN: ${lic.pin}` : lic.key))
+        .join('\n');
+    }
+    if (!createdLicense) return '';
+    return createdLicense.pin ? `${createdLicense.key} PIN: ${createdLicense.pin}` : createdLicense.key;
+  };
+
+  const handleCopyAllKeys = () => {
+    const text = getAllKeysText();
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedKeyOnly(true);
+    setTimeout(() => setCopiedKeyOnly(false), 2000);
+  };
+
+  const handleCopyCredentials = () => {
+    const text = getAllCredentialsText();
+    if (!text) return;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -94,11 +136,13 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
 
   const handleResetForAnother = () => {
     setCreatedLicense(null);
+    setCreatedLicensesList([]);
     setCustomKey('');
     setNotes('');
     setCustomerName('');
     setCustomerEmail('');
     setCopied(false);
+    setCopiedKeyOnly(false);
   };
 
   return (
@@ -107,7 +151,7 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
         {/* Header */}
         <div className="p-3.5 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Key className="w-4 h-4 text-slate-400" />
+            <Key className="w-4 h-4 text-indigo-400" />
             <span className="font-semibold text-slate-200 text-xs tracking-normal">
               {createdLicense ? 'License Created Successfully' : 'Issue License Key'}
             </span>
@@ -120,53 +164,61 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
           </button>
         </div>
 
-        {/* View 1: License Created Success Details (Modal stays open) */}
+        {/* View 1: License Created Success Details & List (Modal stays open) */}
         {createdLicense ? (
-          <div className="p-4 space-y-4 font-sans">
-            <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-900/50 flex items-center gap-2 text-emerald-400">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="font-semibold text-xs text-emerald-300">License Generated Successfully</span>
+          <div className="p-4 space-y-3.5 font-sans">
+            {/* Success Response Alert */}
+            <div className="p-2.5 rounded-lg bg-emerald-950/35 border border-emerald-800/60 flex items-center justify-between text-emerald-300">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="font-semibold text-xs text-emerald-200">
+                  Success: License Generated & Activated!
+                </span>
+              </div>
+              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">
+                Active
+              </span>
             </div>
 
-            {/* License Key & PIN Card */}
+            {/* Created License List Card */}
             <div className="p-3.5 rounded-lg bg-slate-900/60 border border-slate-800 space-y-3 font-sans">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
-                <span className="text-xs uppercase font-medium text-slate-400">License Credentials</span>
-                <span className="px-1.5 py-0.5 rounded bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 text-[10px] font-semibold">
-                  ACTIVE
+                <span className="text-xs uppercase font-medium text-slate-400">
+                  Created License List ({createdLicensesList.length || 1})
+                </span>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  Tier: <span className="text-slate-200 font-medium">{createdLicense.tier}</span>
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2 space-y-1">
-                  <span className="text-xs text-slate-400 block font-normal">License Key</span>
-                  <div className="p-2.5 rounded bg-slate-950 border border-slate-800 font-mono text-slate-200 font-medium tracking-wider select-all text-sm">
-                    {createdLicense.key}
-                  </div>
-                </div>
+              {/* Created License Item(s) */}
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-0.5">
+                {createdLicensesList.map((lic, idx) => (
+                  <div
+                    key={lic.id || idx}
+                    className="p-2.5 rounded bg-slate-950 border border-slate-850 space-y-2 hover:border-slate-800 transition-colors"
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center">
+                      <div className="sm:col-span-2 space-y-0.5">
+                        <span className="text-[10px] text-slate-400 block font-normal">License Key</span>
+                        <div className="p-2 rounded bg-slate-900/90 border border-slate-800 font-mono text-slate-100 font-semibold tracking-wider select-all text-xs break-all">
+                          {lic.key}
+                        </div>
+                      </div>
 
-                <div className="space-y-1">
-                  <span className="text-xs text-indigo-300/90 block font-medium uppercase">Security PIN</span>
-                  <div className="p-2.5 rounded bg-indigo-950/30 border border-indigo-700/50 font-mono text-indigo-300 font-semibold text-center tracking-widest text-sm select-all">
-                    {createdLicense.pin || 'N/A'}
+                      <div className="space-y-0.5">
+                        <span className="text-[10px] text-indigo-300/90 block font-medium uppercase">Security PIN</span>
+                        <div className="p-2 rounded bg-indigo-950/40 border border-indigo-700/50 font-mono text-indigo-200 font-bold text-center tracking-widest text-xs select-all">
+                          {lic.pin || 'N/A'}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
 
-              {/* Combined Format Preview */}
-              <div className="pt-1">
-                <span className="text-xs text-slate-400 block mb-1">Clipboard Copy Format:</span>
-                <div className="p-2 rounded bg-slate-950/80 border border-slate-850 text-slate-300 text-xs font-mono select-all break-all">
-                  {getCopyText(createdLicense)}
-                </div>
-              </div>
-
-              {/* Meta details */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-xs text-slate-400 border-t border-slate-800/60 font-sans">
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Tier</span>
-                  <span className="text-slate-300 font-medium">{createdLicense.tier}</span>
-                </div>
+              {/* Meta Specs Grid */}
+              <div className="grid grid-cols-3 gap-2 pt-2 text-xs text-slate-400 border-t border-slate-800/60 font-sans">
                 <div>
                   <span className="text-[10px] text-slate-500 block">Device Limit</span>
                   <span className="text-slate-300 font-medium">
@@ -181,11 +233,66 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
                       : `${createdLicense.validity_value} ${createdLicense.validity_type}`}
                   </span>
                 </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 block">App Scope</span>
+                  <span className="text-slate-300 font-medium truncate block">
+                    {selectedAppId === 'global' ? 'Global' : (apps.find(a => a.id === selectedAppId)?.display_name || 'Assigned')}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Copy Action Bar */}
+            <div className="p-2.5 rounded bg-slate-900/80 border border-slate-800/90 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-slate-300 font-medium flex items-center gap-1.5">
+                <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                Copy Options:
+              </span>
+              <div className="flex items-center gap-2">
+                {/* Click to copy all created license key button */}
+                <button
+                  type="button"
+                  onClick={handleCopyAllKeys}
+                  title="Copy only license key string(s)"
+                  className="flex items-center gap-1.5 px-3 py-1 rounded bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 font-medium text-xs transition-colors"
+                >
+                  {copiedKeyOnly ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-300" />
+                      <span className="text-emerald-300">Key Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-300" />
+                      <span>Click to copy license key</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Copy full credentials (key + PIN) */}
+                <button
+                  type="button"
+                  onClick={handleCopyCredentials}
+                  title="Copy license key and 4-digit security PIN"
+                  className="flex items-center gap-1.5 px-3.5 py-1 rounded bg-indigo-600/90 hover:bg-indigo-600 text-slate-100 font-medium text-xs transition-colors shadow-sm"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-300" />
+                      <span>Copied (Key & PIN)!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Key & PIN</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
             {/* Modal Actions */}
-            <div className="pt-2 flex items-center justify-between gap-2">
+            <div className="pt-2 flex items-center justify-between gap-2 font-sans">
               <button
                 type="button"
                 onClick={handleResetForAnother}
@@ -195,34 +302,13 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
                 <span>Issue Another</span>
               </button>
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
-                >
-                  Done
-                </button>
-
-                {/* Main Copy Button: Copies License Key and PIN */}
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-indigo-600/90 hover:bg-indigo-600 text-slate-100 font-medium transition-colors shadow-sm"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-300" />
-                      <span>Copied Key & PIN!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copy License & PIN</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-1.5 rounded bg-slate-900 hover:bg-slate-850 text-slate-300 hover:text-slate-100 border border-slate-800 font-medium transition-colors"
+              >
+                Done
+              </button>
             </div>
           </div>
         ) : (
