@@ -1,0 +1,91 @@
+name: Release Python SDK
+
+on:
+  push:
+    tags:
+      - "python-sdk-v*"
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install project dependencies
+        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+
+      - name: Verify tag matches SDK version
+        id: sdk-version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import ast
+          import os
+          import re
+          from pathlib import Path
+
+          tag_name = os.environ["TAG_NAME"]
+          match = re.fullmatch(
+              r"python-sdk-v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)",
+              tag_name,
+          )
+          if match is None:
+              raise SystemExit(f"Invalid Python SDK release tag: {tag_name}")
+
+          module = ast.parse(
+              Path("SDK/x_license_python/__init__.py").read_text(encoding="utf-8")
+          )
+          sdk_version = next(
+              ast.literal_eval(statement.value)
+              for statement in module.body
+              if isinstance(statement, ast.Assign)
+              and any(
+                  isinstance(target, ast.Name) and target.id == "__version__"
+                  for target in statement.targets
+              )
+          )
+          if match.group(1) != sdk_version:
+              raise SystemExit(
+                  f"Tag version {match.group(1)} does not match SDK version {sdk_version}"
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={sdk_version}\n")
+          PY
+
+      - name: Generate SDK archive
+        run: npm run build:sdk-archive
+
+      - name: Verify SDK archive parity
+        run: npm run verify:sdk-archive
+
+      - name: Create release and upload SDK archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          SDK_VERSION: ${{ steps.sdk-version.outputs.version }}
+        run: |
+          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release create "$TAG_NAME" \
+              --verify-tag \
+              --title "Python SDK v${SDK_VERSION}" \
+              --generate-notes
+          fi
+
+          gh release upload "$TAG_NAME" public/x_license_python.zip --clobber

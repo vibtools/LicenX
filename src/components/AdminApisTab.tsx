@@ -391,7 +391,7 @@ print(license['key'], license['pin'])`;
       {actionSuccess && (
         <div className="px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-emerald-400 text-[11px] flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
             <span>{actionSuccess}</span>
           </div>
           <button onClick={() => setActionSuccess(null)} className="text-[10px] hover:underline">Dismiss</button>
@@ -401,7 +401,7 @@ print(license['key'], license['pin'])`;
       {error && (
         <div className="px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-md text-red-400 text-[11px] flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             <span>{error}</span>
           </div>
           <button onClick={() => setError(null)} className="text-[10px] hover:underline">Dismiss</button>
