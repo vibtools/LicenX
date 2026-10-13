@@ -216,9 +216,11 @@ export default function App() {
     return () => window.removeEventListener('popstate', handleLocationChange);
   }, []);
 
-  const checkAuthAndStatus = async () => {
+  const checkAuthAndStatus = async (isInitial = false) => {
     try {
-      setLoading(true);
+      if (isInitial) {
+        setLoading(true);
+      }
       const token = getAuthToken();
 
       if (token) {
@@ -249,12 +251,20 @@ export default function App() {
     } catch (err) {
       console.error('Failed to initialize app', err);
     } finally {
-      setLoading(false);
+      if (isInitial) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    checkAuthAndStatus();
+    checkAuthAndStatus(true);
+  }, []);
+
+  useEffect(() => {
+    if (refreshKey > 0) {
+      checkAuthAndStatus(false);
+    }
   }, [refreshKey]);
 
   const handleLogout = () => {
@@ -456,9 +466,14 @@ export default function App() {
       {/* Modals */}
       {showCreateModal && (
         <CreateLicenseModal
-          onClose={() => setShowCreateModal(false)}
-          onCreated={() => {
+          onClose={() => {
+            setShowCreateModal(false);
             handleRefresh();
+          }}
+          onCreated={() => {
+            // Keep modal open so the user sees the success message, created license list, and copy button
+            api.clearCache();
+            api.getStats(true).then((st) => setStats(st)).catch(() => {});
           }}
         />
       )}
@@ -466,9 +481,14 @@ export default function App() {
       {showBulkModal && (
         <BulkLicenseModal
           r2Configured={setupStatus?.r2Configured ?? false}
-          onClose={() => setShowBulkModal(false)}
-          onCompleted={() => {
+          onClose={() => {
+            setShowBulkModal(false);
             handleRefresh();
+          }}
+          onCompleted={() => {
+            // Keep modal open so user can inspect created list and copy credentials
+            api.clearCache();
+            api.getStats(true).then((st) => setStats(st)).catch(() => {});
           }}
         />
       )}

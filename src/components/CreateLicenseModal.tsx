@@ -76,13 +76,20 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
 
       if (res?.license && typeof res.license === 'object') {
         resolvedLicense = res.license;
+      } else if (res?.data?.license && typeof res.data.license === 'object') {
+        resolvedLicense = res.data.license;
       } else if (res?.key) {
         resolvedLicense = res as License;
+      } else if (res?.data?.key) {
+        resolvedLicense = res.data as License;
       }
 
       if (Array.isArray(res?.licenses) && res.licenses.length > 0) {
         list = res.licenses;
         if (!resolvedLicense) resolvedLicense = res.licenses[0];
+      } else if (Array.isArray(res?.data?.licenses) && res.data.licenses.length > 0) {
+        list = res.data.licenses;
+        if (!resolvedLicense) resolvedLicense = res.data.licenses[0];
       } else if (resolvedLicense) {
         list = [resolvedLicense];
       }
@@ -181,8 +188,8 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
             </div>
 
             {/* Created License List Card */}
-            <div className="p-3.5 rounded-lg bg-slate-900/60 border border-slate-800 space-y-3 font-sans">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
+            <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800 space-y-2.5 font-sans">
+              <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/80">
                 <span className="text-xs uppercase font-medium text-slate-400">
                   Created License List ({createdLicensesList.length || 1})
                 </span>
@@ -200,7 +207,22 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
                   >
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center">
                       <div className="sm:col-span-2 space-y-0.5">
-                        <span className="text-[10px] text-slate-400 block font-normal">License Key</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-slate-400 font-normal">License Key</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(lic.key);
+                              setCopiedKeyOnly(true);
+                              setTimeout(() => setCopiedKeyOnly(false), 2000);
+                            }}
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-sans"
+                            title="Copy single key"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>Copy</span>
+                          </button>
+                        </div>
                         <div className="p-2 rounded bg-slate-900/90 border border-slate-800 font-mono text-slate-100 font-semibold tracking-wider select-all text-xs break-all">
                           {lic.key}
                         </div>
@@ -242,53 +264,57 @@ export const CreateLicenseModal: React.FC<CreateLicenseModalProps> = ({ onClose,
               </div>
             </div>
 
-            {/* Quick Copy Action Bar */}
-            <div className="p-2.5 rounded bg-slate-900/80 border border-slate-800/90 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-slate-300 font-medium flex items-center gap-1.5">
-                <Copy className="w-3.5 h-3.5 text-indigo-400" />
-                Copy Options:
-              </span>
-              <div className="flex items-center gap-2">
-                {/* Click to copy all created license key button */}
-                <button
-                  type="button"
-                  onClick={handleCopyAllKeys}
-                  title="Copy only license key string(s)"
-                  className="flex items-center gap-1.5 px-3 py-1 rounded bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 font-medium text-xs transition-colors"
-                >
-                  {copiedKeyOnly ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-300" />
-                      <span className="text-emerald-300">Key Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5 text-slate-300" />
-                      <span>Click to copy license key</span>
-                    </>
-                  )}
-                </button>
-
-                {/* Copy full credentials (key + PIN) */}
-                <button
-                  type="button"
-                  onClick={handleCopyCredentials}
-                  title="Copy license key and 4-digit security PIN"
-                  className="flex items-center gap-1.5 px-3.5 py-1 rounded bg-indigo-600/90 hover:bg-indigo-600 text-slate-100 font-medium text-xs transition-colors shadow-sm"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-300" />
-                      <span>Copied (Key & PIN)!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copy Key & PIN</span>
-                    </>
-                  )}
-                </button>
+            {/* Quick Copy Action Bar - Prominent primary button */}
+            <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-2 font-sans">
+              <div className="flex items-center justify-between text-xs text-slate-300">
+                <span className="font-medium flex items-center gap-1.5">
+                  <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                  Clipboard Copy
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  {createdLicensesList.length > 1 ? `${createdLicensesList.length} keys ready` : '1 key ready'}
+                </span>
               </div>
+
+              {/* Click to copy all created license key button (Primary prominent button) */}
+              <button
+                type="button"
+                onClick={handleCopyAllKeys}
+                title="Click to copy all created license keys"
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-all shadow-sm cursor-pointer"
+              >
+                {copiedKeyOnly ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-300" />
+                    <span className="text-emerald-100">Copied All License Key(s) to Clipboard!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Click to Copy All Created License Key</span>
+                  </>
+                )}
+              </button>
+
+              {/* Secondary Option: Copy Key & PIN */}
+              <button
+                type="button"
+                onClick={handleCopyCredentials}
+                title="Copy license key and security PIN"
+                className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-750 text-[11px] transition-colors cursor-pointer"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-300">Copied Key & PIN!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Copy Key & PIN</span>
+                  </>
+                )}
+              </button>
             </div>
 
             {/* Modal Actions */}
