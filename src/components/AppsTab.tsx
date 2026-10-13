@@ -15,18 +15,41 @@ import { AppItem } from '../types';
 import { CreateAppModal } from './CreateAppModal';
 import { EditAppModal } from './EditAppModal';
 import { TablePagination } from './TablePagination';
+import { useConfirm } from '../context/ConfirmContext';
 
 export const AppsTab: React.FC = () => {
+  const confirm = useConfirm();
   const [apps, setApps] = useState<AppItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_apps_status_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      const p = sessionStorage.getItem('vcon_apps_page');
+      return p ? parseInt(p, 10) || 1 : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [pageSize, setPageSize] = useState(20);
+
+  // Persist filter and pagination changes to sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('vcon_apps_status_filter', statusFilter);
+      sessionStorage.setItem('vcon_apps_page', String(currentPage));
+    } catch {}
+  }, [statusFilter, currentPage]);
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -103,7 +126,10 @@ export const AppsTab: React.FC = () => {
 
   const handleBulkAction = async (action: string) => {
     if (selectedIds.length === 0) return;
-    if (action === 'delete' && !confirm(`Delete ${selectedIds.length} applications? Linked licenses will become global.`)) return;
+    if (action === 'delete') {
+      const ok = await confirm(`Delete ${selectedIds.length} applications? Linked licenses will become global.`);
+      if (!ok) return;
+    }
 
     try {
       await api.bulkAppAction({ ids: selectedIds, action });
@@ -115,7 +141,8 @@ export const AppsTab: React.FC = () => {
   };
 
   const handleDeleteSingle = async (id: string, name: string) => {
-    if (!confirm(`Delete application "${name}"? Linked licenses will be set to global.`)) return;
+    const ok = await confirm(`Delete application "${name}"? Linked licenses will be set to global.`);
+    if (!ok) return;
     try {
       await api.deleteApp(id);
       await loadApps();

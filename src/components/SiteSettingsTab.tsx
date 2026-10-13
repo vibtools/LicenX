@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { SiteSettings, DEFAULT_SITE_SETTINGS } from '../types';
 import { api } from '../services/apiClient';
+import { useConfirm } from '../context/ConfirmContext';
 
 interface SiteSettingsTabProps {
   onNavigateToTab?: (tab: 'settings') => void;
@@ -28,6 +29,7 @@ export const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({
   onNavigateToTab,
   onSettingsUpdated,
 }) => {
+  const confirm = useConfirm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [r2Configured, setR2Configured] = useState(false);
@@ -83,8 +85,14 @@ export const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({
     }
   };
 
-  const handleResetDefaults = () => {
-    if (window.confirm('Reset to default site settings?')) {
+  const handleResetDefaults = async () => {
+    const ok = await confirm({
+      title: 'Reset Site Settings',
+      message: 'Reset all site settings and branding to system defaults?',
+      confirmText: 'Reset Defaults',
+      danger: true,
+    });
+    if (ok) {
       setSettings(DEFAULT_SITE_SETTINGS);
     }
   };

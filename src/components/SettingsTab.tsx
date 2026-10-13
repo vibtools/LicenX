@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { R2Config, R2Backup } from '../types';
+import { useConfirm } from '../context/ConfirmContext';
 
 interface SettingsTabProps {
   publicKeyPem: string;
@@ -20,6 +21,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   publicKeyPem,
   onPublicKeyUpdated,
 }) => {
+  const confirm = useConfirm();
   const [loading, setLoading] = useState(true);
   const [tursoUrl, setTursoUrl] = useState('');
   const [hasTursoEnv, setHasTursoEnv] = useState(false);
@@ -133,7 +135,13 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   };
 
   const handleRotateCryptoKeys = async () => {
-    if (!confirm('Warning: Rotating the Ed25519 keypair will require updating the public key in your client applications! Proceed?')) {
+    const ok = await confirm({
+      title: 'Rotate Cryptographic Keypair',
+      message: 'Warning: Rotating the Ed25519 keypair will require updating the public key in your client applications! Proceed?',
+      confirmText: 'Rotate Keypair',
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     try {

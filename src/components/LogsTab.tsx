@@ -3,15 +3,38 @@ import { Terminal, Trash2, RefreshCw } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { ValidationLog } from '../types';
 import { TablePagination } from './TablePagination';
+import { useConfirm } from '../context/ConfirmContext';
 
 export const LogsTab: React.FC = () => {
+  const confirm = useConfirm();
   const [logs, setLogs] = useState<ValidationLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [actionFilter, setActionFilter] = useState('all');
+  const [actionFilter, setActionFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_logs_action_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      const p = sessionStorage.getItem('vcon_logs_page');
+      return p ? parseInt(p, 10) || 1 : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [pageSize, setPageSize] = useState(20);
+
+  // Persist filter and pagination to sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('vcon_logs_action_filter', actionFilter);
+      sessionStorage.setItem('vcon_logs_page', String(currentPage));
+    } catch {}
+  }, [actionFilter, currentPage]);
 
   const loadLogs = async (force = false) => {
     try {
@@ -42,7 +65,8 @@ export const LogsTab: React.FC = () => {
   }, [logs, safeCurrentPage, pageSize]);
 
   const handleClearLogs = async () => {
-    if (!confirm('Clear all audit logs permanently?')) return;
+    const ok = await confirm('Clear all audit logs permanently?');
+    if (!ok) return;
     try {
       await api.clearLogs();
       await loadLogs();

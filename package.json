@@ -11,7 +11,7 @@
     "start": "node server.ts",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
     "verify:sdk-archive": "python tests/verify_sdk_archive.py"
   },
   "dependencies": {

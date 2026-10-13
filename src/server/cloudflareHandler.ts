@@ -4,7 +4,9 @@ import {
   createSessionToken,
   generateLicenseKey,
   generateLicensePin,
+  generateAdminApiKey,
   generateRSAKeyPair,
+  hashAdminApiSecret,
   hashPassword,
   signPayloadForCloudflare,
   verifyPassword,
@@ -114,6 +116,126 @@ async function verifyAdminAuth(
     return {
       authorized: false,
       error: SAFE_SERVER_ERROR,
+    };
+  }
+}
+
+// Verify Admin API Key with permissions check for Cloudflare
+// In-memory rate limiting map for Cloudflare worker instance
+const cfAdminApiRateLimits = new Map<string, { count: number; windowStart: number }>();
+const CF_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const CF_RATE_LIMIT_MAX_REQUESTS = 120;
+
+async function verifyAdminApiKey(
+  request: Request,
+  env: any,
+  requiredScope?: string,
+): Promise<{ authorized: boolean; apiKey?: any; error?: string; status?: number }> {
+  try {
+    const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown";
+    const now = Date.now();
+    const rateLimitKey = "cf_admin_api_" + clientIp;
+    const rateEntry = cfAdminApiRateLimits.get(rateLimitKey);
+
+    if (rateEntry) {
+      if (now - rateEntry.windowStart < CF_RATE_LIMIT_WINDOW_MS) {
+        if (rateEntry.count >= CF_RATE_LIMIT_MAX_REQUESTS) {
+          return {
+            authorized: false,
+            error: "Too Many Requests: Rate limit exceeded (max 120 requests/minute). Please slow down.",
+            status: 429,
+          };
+        }
+        rateEntry.count += 1;
+      } else {
+        cfAdminApiRateLimits.set(rateLimitKey, { count: 1, windowStart: now });
+      }
+    } else {
+      cfAdminApiRateLimits.set(rateLimitKey, { count: 1, windowStart: now });
+    }
+    const authHeader =
+      request.headers.get("authorization") ||
+      request.headers.get("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return {
+        authorized: false,
+        error: "Unauthorized: Missing or malformed Bearer token in Authorization header",
+        status: 401,
+      };
+    }
+
+    const secret = authHeader.substring(7).trim();
+    if (!secret || !secret.startsWith("vcon_sec_")) {
+      return {
+        authorized: false,
+        error: "Unauthorized: Invalid Admin API secret key format",
+        status: 401,
+      };
+    }
+
+    const secretHash = hashAdminApiSecret(secret);
+    const db = getDbClient(env);
+    const result = await db.execute({
+      sql: "SELECT id, name, key_prefix, secret_hash, permissions_json, app_id, status FROM admin_api_keys WHERE secret_hash = ? LIMIT 1",
+      args: [secretHash],
+    });
+
+    if (result.rows.length === 0) {
+      return {
+        authorized: false,
+        error: "Unauthorized: Invalid Admin API secret key",
+        status: 401,
+      };
+    }
+
+    const apiKey = result.rows[0];
+    if (apiKey.status !== "active") {
+      return {
+        authorized: false,
+        error: "Forbidden: Admin API key is " + apiKey.status,
+        status: 403,
+      };
+    }
+
+    if (requiredScope) {
+      let permissions: string[] = [];
+      try {
+        permissions = JSON.parse((apiKey.permissions_json as string) || "[]");
+      } catch {
+        permissions = [];
+      }
+
+      if (!permissions.includes(requiredScope) && !permissions.includes("admin:*")) {
+        return {
+          authorized: false,
+          error: "Forbidden: API key lacks required scope " + requiredScope,
+          status: 403,
+        };
+      }
+    }
+
+    // Update last_used_at timestamp asynchronously
+    db.execute({
+      sql: "UPDATE admin_api_keys SET last_used_at = ? WHERE id = ?",
+      args: [Date.now(), apiKey.id],
+    }).catch((err) => {
+      console.error("[Admin API Key] Failed to update last_used_at:", err);
+    });
+
+    return {
+      authorized: true,
+      apiKey: {
+        id: apiKey.id,
+        name: apiKey.name,
+        key_prefix: apiKey.key_prefix,
+        app_id: apiKey.app_id || null,
+      },
+    };
+  } catch (error: any) {
+    return {
+      authorized: false,
+      error: error.message || "Failed to authenticate Admin API key",
+      status: 500,
     };
   }
 }
@@ -2464,6 +2586,386 @@ export async function handleCloudflareApi(
           "Cache-Control":
             "public, max-age=604800, stale-while-revalidate=86400",
         },
+      });
+    }
+
+
+    // -----------------------------------------------------------------
+    // ADMIN PANEL API KEY MANAGEMENT ENDPOINTS (Session Authenticated)
+    // -----------------------------------------------------------------
+    if (
+      (normalizedPath === "/admin-api-keys" || normalizedPath === "/api/admin-api-keys") &&
+      method === "GET"
+    ) {
+      const auth = await verifyAdminAuth(request, env);
+      if (!auth.authorized) return errorResponse(auth.error || "Unauthorized", 401);
+
+      const result = await db.execute(
+        "SELECT id, name, key_prefix, permissions_json, app_id, last_used_at, status, created_at FROM admin_api_keys ORDER BY created_at DESC"
+      );
+      return jsonResponse({
+        success: true,
+        keys: result.rows,
+      });
+    }
+
+    if (
+      (normalizedPath === "/admin-api-keys" || normalizedPath === "/api/admin-api-keys") &&
+      method === "POST"
+    ) {
+      const auth = await verifyAdminAuth(request, env);
+      if (!auth.authorized) return errorResponse(auth.error || "Unauthorized", 401);
+
+      const {
+        name,
+        prefix = "live",
+        permissions = ["licenses:create", "licenses:read", "licenses:manage"],
+        app_id = null,
+      } = body;
+
+      if (!name || typeof name !== "string" || !name.trim()) {
+        return errorResponse("Key name is required", 400);
+      }
+
+      const generated = generateAdminApiKey(prefix);
+      const now = Date.now();
+      const permsJson = JSON.stringify(
+        Array.isArray(permissions) && permissions.length > 0
+          ? permissions
+          : ["licenses:create", "licenses:read", "licenses:manage"]
+      );
+
+      await db.execute({
+        sql: "INSERT INTO admin_api_keys (id, name, key_prefix, secret_hash, permissions_json, app_id, last_used_at, status, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, 'active', ?)",
+        args: [
+          generated.id,
+          name.trim(),
+          generated.keyPrefix,
+          generated.secretHash,
+          permsJson,
+          app_id ? String(app_id).trim() : null,
+          now,
+        ],
+      });
+
+      return jsonResponse(
+        {
+          success: true,
+          key: {
+            id: generated.id,
+            name: name.trim(),
+            key_prefix: generated.keyPrefix,
+            secret: generated.secret,
+            permissions: JSON.parse(permsJson),
+            app_id: app_id ? String(app_id).trim() : null,
+            status: "active",
+            created_at: now,
+          },
+        },
+        201
+      );
+    }
+
+    if (
+      (normalizedPath.startsWith("/admin-api-keys/") ||
+        normalizedPath.startsWith("/api/admin-api-keys/")) &&
+      method === "DELETE"
+    ) {
+      const auth = await verifyAdminAuth(request, env);
+      if (!auth.authorized) return errorResponse(auth.error || "Unauthorized", 401);
+
+      const keyId = normalizedPath.replace(/^\/(api\/)?admin-api-keys\//, "");
+      await db.execute({
+        sql: "DELETE FROM admin_api_keys WHERE id = ?",
+        args: [keyId],
+      });
+      return jsonResponse({
+        success: true,
+        message: "Admin API key deleted successfully",
+      });
+    }
+
+    // -----------------------------------------------------------------
+    // EXTERNAL STORE REST API ENDPOINTS (/api/v1/admin/*)
+    // -----------------------------------------------------------------
+    if (
+      (normalizedPath === "/api/v1/admin/licenses" ||
+        normalizedPath === "/v1/admin/licenses") &&
+      method === "POST"
+    ) {
+      const auth = await verifyAdminApiKey(request, env, "licenses:create");
+      if (!auth.authorized) {
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
+      }
+
+      const {
+        key,
+        prefix = "VCON",
+        tier = "Standard",
+        app_id = null,
+        app_slug = null,
+        device_limit = 1,
+        validity_type = "lifetime",
+        validity_value = 0,
+        customer_name = "",
+        customer_email = "",
+        notes = "",
+        expires_at = null,
+      } = body;
+
+      const apiKeyScopeAppId = auth.apiKey?.app_id || null;
+
+      // 1. Resolve target app (by app_id or app_slug)
+      let resolvedAppId: string | null = null;
+      let resolvedAppSlug: string | null = null;
+      const requestedAppIdentifier = (app_id || app_slug) ? String(app_id || app_slug).trim() : null;
+
+      if (requestedAppIdentifier && requestedAppIdentifier.toLowerCase() !== "global") {
+        const appRes = await db.execute({
+          sql: "SELECT id, app_slug FROM apps WHERE id = ? OR app_slug = ? LIMIT 1",
+          args: [requestedAppIdentifier, requestedAppIdentifier],
+        });
+        if (appRes.rows.length === 0) {
+          return errorResponse(
+            `Invalid app specified: '${requestedAppIdentifier}' does not match any registered application`,
+            400,
+          );
+        }
+        const appRow = appRes.rows[0] as any;
+        resolvedAppId = appRow.id;
+        resolvedAppSlug = appRow.app_slug;
+      } else if (apiKeyScopeAppId) {
+        // Inherit API key's scoped app automatically when body omits app
+        const appRes = await db.execute({
+          sql: "SELECT id, app_slug FROM apps WHERE id = ? LIMIT 1",
+          args: [apiKeyScopeAppId],
+        });
+        if (appRes.rows.length > 0) {
+          const appRow = appRes.rows[0] as any;
+          resolvedAppId = appRow.id;
+          resolvedAppSlug = appRow.app_slug;
+        } else {
+          resolvedAppId = apiKeyScopeAppId;
+        }
+      }
+
+      // 2. Cross-App Authorization Guard:
+      // If the API key is restricted to a specific app, prevent creating licenses for a different app
+      if (apiKeyScopeAppId && resolvedAppId !== apiKeyScopeAppId) {
+        return errorResponse(
+          `Forbidden: This API key is restricted to application ID '${apiKeyScopeAppId}' and cannot issue licenses for another application`,
+          403,
+        );
+      }
+
+      const finalKey = key ? key.trim().toUpperCase() : generateLicenseKey(prefix);
+      const pin = generateLicensePin();
+      const id = "lic_" + crypto.randomBytes(8).toString("hex");
+      const now = Date.now();
+      const computedExpiresAt = expires_at;
+
+      await db.execute({
+        sql: "INSERT INTO licenses (id, key, status, tier, app_id, device_limit, validity_type, validity_value, activated_at, expires_at, created_at, customer_name, customer_email, notes, pin) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+        args: [
+          id,
+          finalKey,
+          tier,
+          resolvedAppId,
+          Number(device_limit) || 1,
+          validity_type,
+          Number(validity_value) || 0,
+          computedExpiresAt,
+          now,
+          customer_name || null,
+          customer_email || null,
+          notes || null,
+          pin,
+        ],
+      });
+
+      return jsonResponse(
+        {
+          success: true,
+          license: {
+            id,
+            key: finalKey,
+            pin,
+            status: "active",
+            tier,
+            app_id: resolvedAppId,
+            app_slug: resolvedAppSlug,
+            device_limit: Number(device_limit) || 1,
+            validity_type,
+            validity_value: Number(validity_value) || 0,
+            expires_at: computedExpiresAt,
+            created_at: now,
+            customer_name: customer_name || null,
+            customer_email: customer_email || null,
+            notes: notes || null,
+          },
+        },
+        201,
+      );
+    }
+
+    if (
+      (normalizedPath.startsWith("/api/v1/admin/licenses/") ||
+        normalizedPath.startsWith("/v1/admin/licenses/")) &&
+      !normalizedPath.endsWith("/reset") &&
+      !normalizedPath.endsWith("/status") &&
+      method === "GET"
+    ) {
+      const auth = await verifyAdminApiKey(request, env, "licenses:read");
+      if (!auth.authorized) {
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
+      }
+
+      const keyParam = normalizedPath
+        .replace(/^\/(api\/)?v1\/admin\/licenses\//, "");
+      if (!keyParam) {
+        return errorResponse("Missing license key", 400);
+      }
+
+      const cleanKey = decodeURIComponent(keyParam).trim().toUpperCase();
+      const licRes = await db.execute({
+        sql: "SELECT id, key, status, tier, app_id, device_limit, validity_type, validity_value, activated_at, expires_at, created_at, customer_name, customer_email, notes, pin FROM licenses WHERE key = ? LIMIT 1",
+        args: [cleanKey],
+      });
+
+      if (licRes.rows.length === 0) {
+        return errorResponse("License not found", 404);
+      }
+
+      const lic = licRes.rows[0];
+      const now = Date.now();
+      let currentStatus = lic.status as string;
+
+      if (lic.expires_at && now > Number(lic.expires_at) && currentStatus === "active") {
+        currentStatus = "expired";
+        await db.execute({
+          sql: "UPDATE licenses SET status = 'expired' WHERE id = ?",
+          args: [lic.id],
+        });
+      }
+
+      const devicesRes = await db.execute({
+        sql: "SELECT id, hwid, device_name, os_info, ip_address, first_bound_at, last_ping_at, status FROM devices WHERE license_id = ? AND status = 'active' ORDER BY last_ping_at DESC, first_bound_at DESC",
+        args: [lic.id],
+      });
+
+      return jsonResponse({
+        success: true,
+        license: {
+          id: lic.id,
+          key: lic.key,
+          pin: lic.pin,
+          status: currentStatus,
+          tier: lic.tier,
+          app_id: lic.app_id || null,
+          device_limit: Number(lic.device_limit),
+          bound_devices_count: devicesRes.rows.length,
+          validity_type: lic.validity_type,
+          validity_value: Number(lic.validity_value),
+          activated_at: lic.activated_at ? Number(lic.activated_at) : null,
+          expires_at: lic.expires_at ? Number(lic.expires_at) : null,
+          created_at: Number(lic.created_at),
+          customer_name: lic.customer_name || null,
+          customer_email: lic.customer_email || null,
+          notes: lic.notes || null,
+          devices: devicesRes.rows,
+        },
+      });
+    }
+
+    if (
+      (normalizedPath.startsWith("/api/v1/admin/licenses/") ||
+        normalizedPath.startsWith("/v1/admin/licenses/")) &&
+      normalizedPath.endsWith("/reset") &&
+      method === "POST"
+    ) {
+      const auth = await verifyAdminApiKey(request, env, "licenses:manage");
+      if (!auth.authorized) {
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
+      }
+
+      const keyParam = normalizedPath
+        .replace(/^\/(api\/)?v1\/admin\/licenses\//, "")
+        .replace(/\/reset$/, "");
+      if (!keyParam) {
+        return errorResponse("Missing license key", 400);
+      }
+
+      const cleanKey = decodeURIComponent(keyParam).trim().toUpperCase();
+      const licRes = await db.execute({
+        sql: "SELECT id FROM licenses WHERE key = ? LIMIT 1",
+        args: [cleanKey],
+      });
+
+      if (licRes.rows.length === 0) {
+        return errorResponse("License not found", 404);
+      }
+
+      const licId = licRes.rows[0].id as string;
+      const deleteRes = await db.execute({
+        sql: "DELETE FROM devices WHERE license_id = ?",
+        args: [licId],
+      });
+
+      return jsonResponse({
+        success: true,
+        message: "All devices unbound successfully. License is fresh and ready for new hardware.",
+        reset_devices_count: deleteRes.rowsAffected ?? 0,
+      });
+    }
+
+    if (
+      (normalizedPath.startsWith("/api/v1/admin/licenses/") ||
+        normalizedPath.startsWith("/v1/admin/licenses/")) &&
+      normalizedPath.endsWith("/status") &&
+      method === "PATCH"
+    ) {
+      const auth = await verifyAdminApiKey(request, env, "licenses:manage");
+      if (!auth.authorized) {
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
+      }
+
+      const keyParam = normalizedPath
+        .replace(/^\/(api\/)?v1\/admin\/licenses\//, "")
+        .replace(/\/status$/, "");
+      if (!keyParam) {
+        return errorResponse("Missing license key", 400);
+      }
+
+      const { status } = body;
+      const validStatuses = ["active", "suspended", "revoked", "expired"];
+      if (!status || !validStatuses.includes(status)) {
+        return errorResponse(
+          "Invalid status. Must be one of: " + validStatuses.join(", "),
+          400,
+        );
+      }
+
+      const cleanKey = decodeURIComponent(keyParam).trim().toUpperCase();
+      const licRes = await db.execute({
+        sql: "SELECT id, status FROM licenses WHERE key = ? LIMIT 1",
+        args: [cleanKey],
+      });
+
+      if (licRes.rows.length === 0) {
+        return errorResponse("License not found", 404);
+      }
+
+      const licId = licRes.rows[0].id as string;
+      await db.execute({
+        sql: "UPDATE licenses SET status = ? WHERE id = ?",
+        args: [status, licId],
+      });
+
+      return jsonResponse({
+        success: true,
+        message: "License status updated to " + status,
+        license_key: cleanKey,
+        status,
       });
     }
 

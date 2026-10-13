@@ -5,8 +5,20 @@ import { AppItem } from '../types';
 
 export const SimulatorTab: React.FC = () => {
   const [apps, setApps] = useState<AppItem[]>([]);
-  const [selectedAppName, setSelectedAppName] = useState<string>('');
-  const [appVersion, setAppVersion] = useState<string>('1.0.0');
+  const [selectedAppName, setSelectedAppName] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('vcon_simulator_app') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [appVersion, setAppVersion] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('vcon_simulator_version') || '1.0.0';
+    } catch {
+      return '1.0.0';
+    }
+  });
   const [licenseKey, setLicenseKey] = useState('');
   const [hwid, setHwid] = useState('HWID-9F82-BCA1-48C7');
   const [deviceName, setDeviceName] = useState('DESKTOP-TEST-01');
@@ -20,8 +32,18 @@ export const SimulatorTab: React.FC = () => {
       const validApps = Array.isArray(appList) ? appList : [];
       setApps(validApps);
       if (validApps.length > 0) {
-        setSelectedAppName(validApps[0].app_slug);
-        setAppVersion(validApps[0].min_version || '1.0.0');
+        setSelectedAppName((current) => {
+          if (current && validApps.some((a) => a.app_slug === current)) {
+            return current;
+          }
+          const defaultSlug = validApps[0].app_slug;
+          try {
+            sessionStorage.setItem('vcon_simulator_app', defaultSlug);
+            sessionStorage.setItem('vcon_simulator_version', validApps[0].min_version || '1.0.0');
+          } catch {}
+          setAppVersion(validApps[0].min_version || '1.0.0');
+          return defaultSlug;
+        });
       }
     }).catch(() => {});
   }, []);
@@ -83,9 +105,18 @@ export const SimulatorTab: React.FC = () => {
               <select
                 value={selectedAppName}
                 onChange={(e) => {
-                  setSelectedAppName(e.target.value);
-                  const found = apps.find((a) => a.app_slug === e.target.value);
-                  if (found) setAppVersion(found.min_version);
+                  const val = e.target.value;
+                  setSelectedAppName(val);
+                  try {
+                    sessionStorage.setItem('vcon_simulator_app', val);
+                  } catch {}
+                  const found = apps.find((a) => a.app_slug === val);
+                  if (found) {
+                    setAppVersion(found.min_version);
+                    try {
+                      sessionStorage.setItem('vcon_simulator_version', found.min_version);
+                    } catch {}
+                  }
                 }}
                 className="w-full px-2 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-200 focus:outline-none"
               >

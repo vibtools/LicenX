@@ -375,3 +375,48 @@ export function verifySessionToken(
     return null;
   }
 }
+
+/**
+ * Admin API Key Cryptographic Engine (for External Stores & Integrations)
+ */
+export function hashAdminApiSecret(secret: string): string {
+  return crypto.createHash("sha256").update(secret.trim()).digest("hex");
+}
+
+export function verifyAdminApiSecret(
+  secret: string,
+  secretHash: string,
+): boolean {
+  try {
+    const computedHash = hashAdminApiSecret(secret);
+    return crypto.timingSafeEqual(
+      Buffer.from(computedHash, "hex"),
+      Buffer.from(secretHash, "hex"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export interface GeneratedAdminApiKey {
+  id: string;
+  keyPrefix: string;
+  secret: string;
+  secretHash: string;
+}
+
+export function generateAdminApiKey(prefix = "live"): GeneratedAdminApiKey {
+  const sanitized = prefix.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase() || "live";
+  const id = `apk_${crypto.randomBytes(8).toString("hex")}`;
+  const keyPrefix = `vcon_${sanitized}_${crypto.randomBytes(4).toString("hex")}`;
+  const secret = `vcon_sec_${crypto.randomBytes(24).toString("hex")}`;
+  const secretHash = hashAdminApiSecret(secret);
+
+  return {
+    id,
+    keyPrefix,
+    secret,
+    secretHash,
+  };
+}
+

@@ -21,6 +21,7 @@ import {
 import { api } from '../services/apiClient';
 import { License, AppItem } from '../types';
 import { TablePagination } from './TablePagination';
+import { useConfirm } from '../context/ConfirmContext';
 
 interface LicensesTabProps {
   onOpenCreate: () => void;
@@ -33,20 +34,56 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   onOpenBulk,
   onManageDevices,
 }) => {
+  const confirm = useConfirm();
   const [licenses, setLicenses] = useState<License[]>([]);
   const [apps, setApps] = useState<AppItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [tierFilter, setTierFilter] = useState('all');
-  const [appFilter, setAppFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_licenses_status_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
+  const [tierFilter, setTierFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_licenses_tier_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
+  const [appFilter, setAppFilter] = useState(() => {
+    try {
+      return sessionStorage.getItem('vcon_licenses_app_filter') || 'all';
+    } catch {
+      return 'all';
+    }
+  });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      const p = sessionStorage.getItem('vcon_licenses_page');
+      return p ? parseInt(p, 10) || 1 : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [pageSize, setPageSize] = useState(20);
+
+  // Persist filter and pagination changes to sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('vcon_licenses_status_filter', statusFilter);
+      sessionStorage.setItem('vcon_licenses_tier_filter', tierFilter);
+      sessionStorage.setItem('vcon_licenses_app_filter', appFilter);
+      sessionStorage.setItem('vcon_licenses_page', String(currentPage));
+    } catch {}
+  }, [statusFilter, tierFilter, appFilter, currentPage]);
 
   // Settings dropdown state per license
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -162,8 +199,14 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
 
   const handleBulkAction = async (action: string, extendDays?: number) => {
     if (selectedIds.length === 0) return;
-    if (action === 'delete' && !confirm(`Delete ${selectedIds.length} licenses?`)) return;
-    if (action === 'reset' && !confirm(`Reset devices for ${selectedIds.length} licenses? All clients will be logged out and slots cleared.`)) return;
+    if (action === 'delete') {
+      const ok = await confirm(`Delete ${selectedIds.length} licenses?`);
+      if (!ok) return;
+    }
+    if (action === 'reset') {
+      const ok = await confirm(`Reset devices for ${selectedIds.length} licenses? All clients will be logged out and slots cleared.`);
+      if (!ok) return;
+    }
 
     try {
       await api.bulkAction({ ids: selectedIds, action, extendDays });
@@ -175,7 +218,8 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   };
 
   const handleDeleteSingle = async (id: string) => {
-    if (!confirm('Delete this license key permanently?')) return;
+    const ok = await confirm('Delete this license key permanently?');
+    if (!ok) return;
     try {
       await api.deleteLicense(id);
       setOpenMenuId(null);
@@ -186,9 +230,8 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   };
 
   const handleResetSingle = async (lic: License) => {
-    if (!confirm(`Reset all devices for license key "${lic.key}"?\n\nThis will log out all connected client devices, unbind hardware locks, and make the license fresh and ready to use.`)) {
-      return;
-    }
+    const ok = await confirm(`Reset all devices for license key "${lic.key}"?\n\nThis will log out all connected client devices, unbind hardware locks, and make the license fresh and ready to use.`);
+    if (!ok) return;
     try {
       await api.resetLicenseDevices(lic.id);
       await loadLicenses();
@@ -198,9 +241,8 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   };
 
   const handleLogoutSingle = async (lic: License) => {
-    if (!confirm(`Force logout all client apps bound to license "${lic.key}"?`)) {
-      return;
-    }
+    const ok = await confirm(`Force logout all client apps bound to license "${lic.key}"?`);
+    if (!ok) return;
     try {
       await api.resetLicenseDevices(lic.id);
       await loadLicenses();

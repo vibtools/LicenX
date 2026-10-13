@@ -18,6 +18,7 @@ import {
   Shield,
   AppWindow,
   Globe,
+  Webhook,
 } from 'lucide-react';
 import { ActiveTab, SiteSettings } from '../types';
 
@@ -139,6 +140,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <Settings className="w-3.5 h-3.5" />,
       items: [
         {
+          id: 'admin-apis',
+          label: 'Admin APIs',
+          icon: <Webhook className="w-3.5 h-3.5" />,
+        },
+        {
           id: 'profile',
           label: 'Admin Profile',
           icon: <UserCheck className="w-3.5 h-3.5" />,
@@ -158,6 +164,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = sessionStorage.getItem('vcon_sidebar_open_groups');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {}
     const initial: Record<string, boolean> = {};
     navGroups.forEach((g) => {
       initial[g.id] = true;
@@ -168,7 +180,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     navGroups.forEach((group) => {
       if (group.items.some((item) => item.id === activeTab)) {
-        setOpenGroups((prev) => ({ ...prev, [group.id]: true }));
+        setOpenGroups((prev) => {
+          if (prev[group.id]) return prev;
+          const next = { ...prev, [group.id]: true };
+          try {
+            sessionStorage.setItem('vcon_sidebar_open_groups', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
       }
     });
   }, [activeTab]);
@@ -176,13 +195,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const toggleGroup = (groupId: string) => {
     if (collapsed) {
       setCollapsed(false);
-      setOpenGroups((prev) => ({ ...prev, [groupId]: true }));
+      setOpenGroups((prev) => {
+        const next = { ...prev, [groupId]: true };
+        try {
+          sessionStorage.setItem('vcon_sidebar_open_groups', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
       return;
     }
-    setOpenGroups((prev) => ({
-      ...prev,
-      [groupId]: !prev[groupId],
-    }));
+    setOpenGroups((prev) => {
+      const next = {
+        ...prev,
+        [groupId]: !prev[groupId],
+      };
+      try {
+        sessionStorage.setItem('vcon_sidebar_open_groups', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
   };
 
   const handleItemClick = (id: ActiveTab) => {

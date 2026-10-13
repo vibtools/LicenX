@@ -23,6 +23,18 @@ interface ResolvedDatabaseConfig {
   isRemoteUrl: boolean;
 }
 
+export interface AdminApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  secret_hash: string;
+  permissions_json: string;
+  app_id?: string | null;
+  last_used_at?: number | null;
+  status: "active" | "revoked";
+  created_at: number;
+}
+
 export class DatabaseConfigurationError extends Error {
   constructor(message: string) {
     super(message);
@@ -171,6 +183,33 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
     await db.execute(`
       CREATE INDEX IF NOT EXISTS idx_user_control_pin_attempts_window
       ON user_control_pin_attempts(window_started_at)
+    `);
+
+    // Admin API Keys table (External Store & REST automation)
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS admin_api_keys (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        key_prefix TEXT NOT NULL,
+        secret_hash TEXT NOT NULL,
+        permissions_json TEXT NOT NULL,
+        app_id TEXT,
+        last_used_at INTEGER,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL
+      )
+    `);
+    await db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_api_keys_prefix
+      ON admin_api_keys(key_prefix)
+    `);
+    await db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_api_keys_status
+      ON admin_api_keys(status)
+    `);
+    await db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_api_keys_secret_hash
+      ON admin_api_keys(secret_hash)
     `);
 
     try {
