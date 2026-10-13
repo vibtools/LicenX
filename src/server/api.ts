@@ -2872,6 +2872,7 @@ apiRouter.post(
         prefix = "VCON",
         tier = "Standard",
         app_id = null,
+        app_slug = null,
         device_limit = 1,
         validity_type = "lifetime",
         validity_value = 0,
@@ -2882,6 +2883,53 @@ apiRouter.post(
       } = req.body;
 
       const db = getDbClient();
+      const apiKeyScopeAppId = (req as any).adminApiKey?.app_id || null;
+
+      // 1. Resolve target app (by app_id or app_slug)
+      let resolvedAppId: string | null = null;
+      let resolvedAppSlug: string | null = null;
+      const requestedAppIdentifier = (app_id || app_slug) ? String(app_id || app_slug).trim() : null;
+
+      if (requestedAppIdentifier && requestedAppIdentifier.toLowerCase() !== "global") {
+        const appRes = await db.execute({
+          sql: "SELECT id, app_slug FROM apps WHERE id = ? OR app_slug = ? LIMIT 1",
+          args: [requestedAppIdentifier, requestedAppIdentifier],
+        });
+        if (appRes.rows.length === 0) {
+          res.status(400).json({
+            success: false,
+            error: `Invalid app specified: '${requestedAppIdentifier}' does not match any registered application`,
+          });
+          return;
+        }
+        const appRow = appRes.rows[0] as any;
+        resolvedAppId = appRow.id;
+        resolvedAppSlug = appRow.app_slug;
+      } else if (apiKeyScopeAppId) {
+        // Inherit API key's scoped app automatically when body omits app
+        const appRes = await db.execute({
+          sql: "SELECT id, app_slug FROM apps WHERE id = ? LIMIT 1",
+          args: [apiKeyScopeAppId],
+        });
+        if (appRes.rows.length > 0) {
+          const appRow = appRes.rows[0] as any;
+          resolvedAppId = appRow.id;
+          resolvedAppSlug = appRow.app_slug;
+        } else {
+          resolvedAppId = apiKeyScopeAppId;
+        }
+      }
+
+      // 2. Cross-App Authorization Guard:
+      // If the API key is restricted to a specific app, prevent creating licenses for a different app
+      if (apiKeyScopeAppId && resolvedAppId !== apiKeyScopeAppId) {
+        res.status(403).json({
+          success: false,
+          error: `Forbidden: This API key is restricted to application ID '${apiKeyScopeAppId}' and cannot issue licenses for another application`,
+        });
+        return;
+      }
+
       const finalKey = key ? key.trim().toUpperCase() : generateLicenseKey(prefix);
       const pin = generateLicensePin();
       const id = "lic_" + crypto.randomBytes(8).toString("hex");
@@ -2894,7 +2942,7 @@ apiRouter.post(
           id,
           finalKey,
           tier,
-          app_id ? String(app_id).trim() : null,
+          resolvedAppId,
           Number(device_limit) || 1,
           validity_type,
           Number(validity_value) || 0,
@@ -2915,7 +2963,8 @@ apiRouter.post(
           pin,
           status: "active",
           tier,
-          app_id: app_id || null,
+          app_id: resolvedAppId,
+          app_slug: resolvedAppSlug,
           device_limit: Number(device_limit) || 1,
           validity_type,
           validity_value: Number(validity_value) || 0,

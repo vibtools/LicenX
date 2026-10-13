@@ -59,6 +59,7 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = () => {
 
   // Sandbox state
   const [testerKey, setTesterKey] = useState('');
+  const [testerAppId, setTesterAppId] = useState('');
   const [testerPrefix, setTesterPrefix] = useState('STORE');
   const [testerTier, setTesterTier] = useState('Standard');
   const [testerValidityType, setTesterValidityType] = useState('daily');
@@ -91,6 +92,13 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = () => {
     loadData();
   }, []);
 
+  // Auto-sync testerAppId when createdKeyData changes
+  useEffect(() => {
+    if (createdKeyData && createdKeyData.app_id) {
+      setTesterAppId(createdKeyData.app_id);
+    }
+  }, [createdKeyData]);
+
   const handleCreateKey = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKeyName.trim()) return;
@@ -108,6 +116,9 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = () => {
       if (res.success && res.key) {
         setCreatedKeyData(res.key);
         setTesterKey(res.key.secret);
+        if (res.key.app_id) {
+          setTesterAppId(res.key.app_id);
+        }
         await loadData();
       }
     } catch (err: any) {
@@ -171,6 +182,7 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = () => {
         body: JSON.stringify({
           prefix: testerPrefix.trim() || 'STORE',
           tier: testerTier,
+          app_id: testerAppId ? testerAppId.trim() : null,
           device_limit: Number(testerDeviceLimit) || 1,
           validity_type: testerValidityType,
           validity_value: Number(testerValidityValue) || 0,
@@ -200,6 +212,10 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = () => {
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://your-license-server.com';
 
+  const selectedAppObj = apps.find((a) => a.id === testerAppId || a.app_slug === testerAppId);
+  const currentAppSlug = selectedAppObj?.app_slug || (testerAppId ? testerAppId : 'your-app-slug');
+  const activeSecretKey = testerKey.trim() || createdKeyData?.secret || 'vcon_sec_YOUR_SECRET_KEY';
+
   const phpSnippet = `<?php
 add_action('woocommerce_order_status_completed', 'vcon_issue_license');
 
@@ -210,14 +226,15 @@ function vcon_issue_license($order_id) {
     $response = wp_remote_post('${baseUrl}/api/v1/admin/licenses', [
         'headers' => [
             'Content-Type'  => 'application/json',
-            'Authorization' => 'Bearer ${createdKeyData?.secret || 'vcon_sec_YOUR_SECRET_KEY'}',
+            'Authorization' => 'Bearer ${activeSecretKey}',
         ],
         'body' => json_encode([
-            'prefix'         => 'WOO',
-            'tier'           => 'Pro',
-            'validity_type'  => 'daily',
-            'validity_value' => 30,
-            'device_limit'   => 1,
+            'prefix'         => '${testerPrefix || 'WOO'}',
+            'tier'           => '${testerTier || 'Pro'}',
+            'app_slug'       => '${currentAppSlug}', // App slug/ID (or omit if key is app-scoped)
+            'validity_type'  => '${testerValidityType || 'daily'}',
+            'validity_value' => ${testerValidityValue || 30},
+            'device_limit'   => ${testerDeviceLimit || 1},
             'customer_name'  => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name(),
             'customer_email' => $order->get_billing_email(),
             'notes'          => 'Order #' . $order_id,
@@ -239,21 +256,22 @@ function vcon_issue_license($order_id) {
 
 async function issueLicense(order) {
   const res = await axios.post('${baseUrl}/api/v1/admin/licenses', {
-    prefix: 'STORE',
-    tier: 'Pro',
-    validity_type: 'daily',
-    validity_value: 30,
-    device_limit: 1,
+    prefix: '${testerPrefix || 'STORE'}',
+    tier: '${testerTier || 'Pro'}',
+    app_slug: '${currentAppSlug}', // Optional if API key is app-scoped
+    validity_type: '${testerValidityType || 'daily'}',
+    validity_value: ${testerValidityValue || 30},
+    device_limit: ${testerDeviceLimit || 1},
     customer_name: order.customerName,
     customer_email: order.customerEmail,
     notes: 'Order #' + order.id,
   }, {
     headers: {
-      'Authorization': 'Bearer ${createdKeyData?.secret || 'vcon_sec_YOUR_SECRET_KEY'}',
+      'Authorization': 'Bearer ${activeSecretKey}',
       'Content-Type': 'application/json',
     },
   });
-  return res.data.license; // { key, pin, status, ... }
+  return res.data.license; // { key, pin, status, app_id, ... }
 }`;
 
   const pythonSnippet = `import requests
@@ -261,15 +279,16 @@ async function issueLicense(order) {
 res = requests.post(
     '${baseUrl}/api/v1/admin/licenses',
     headers={
-        'Authorization': 'Bearer ${createdKeyData?.secret || 'vcon_sec_YOUR_SECRET_KEY'}',
+        'Authorization': 'Bearer ${activeSecretKey}',
         'Content-Type': 'application/json'
     },
     json={
-        'prefix': 'STORE',
-        'tier': 'Pro',
-        'validity_type': 'hourly',
-        'validity_value': 24,
-        'device_limit': 1,
+        'prefix': '${testerPrefix || 'STORE'}',
+        'tier': '${testerTier || 'Pro'}',
+        'app_slug': '${currentAppSlug}',
+        'validity_type': '${testerValidityType || 'hourly'}',
+        'validity_value': ${testerValidityValue || 24},
+        'device_limit': ${testerDeviceLimit || 1},
         'customer_name': 'Customer',
         'customer_email': 'user@example.com'
     }
@@ -278,14 +297,15 @@ license = res.json().get('license')
 print(license['key'], license['pin'])`;
 
   const curlSnippet = `curl -X POST "${baseUrl}/api/v1/admin/licenses" \\
-  -H "Authorization: Bearer ${createdKeyData?.secret || 'vcon_sec_YOUR_SECRET_KEY'}" \\
+  -H "Authorization: Bearer ${activeSecretKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "prefix": "STORE",
-    "tier": "Pro",
-    "device_limit": 1,
-    "validity_type": "hourly",
-    "validity_value": 24
+    "prefix": "${testerPrefix || 'STORE'}",
+    "tier": "${testerTier || 'Pro'}",
+    "app_slug": "${currentAppSlug}",
+    "device_limit": ${testerDeviceLimit || 1},
+    "validity_type": "${testerValidityType || 'hourly'}",
+    "validity_value": ${testerValidityValue || 24}
   }'`;
 
   return (
@@ -519,6 +539,22 @@ print(license['key'], license['pin'])`;
                     placeholder="vcon_sec_..."
                     className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 mb-1">Target Application:</label>
+                  <select
+                    value={testerAppId}
+                    onChange={(e) => setTesterAppId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="">Global (Universal License)</option>
+                    {apps.map((app) => (
+                      <option key={app.id} value={app.id}>
+                        {app.display_name} ({app.app_slug})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">
@@ -846,6 +882,12 @@ print(license['key'], license['pin'])`;
                       </thead>
                       <tbody className="divide-y divide-slate-800 font-mono text-slate-300 bg-slate-950/40">
                         <tr>
+                          <td className="py-1.5 px-2.5 text-indigo-300">app_slug / app_id</td>
+                          <td className="py-1.5 px-2.5 text-slate-400">string</td>
+                          <td className="py-1.5 px-2.5">null (Key Scope)</td>
+                          <td className="py-1.5 px-2.5 font-sans text-slate-300">App slug or ID (e.g. "my-app"). Binds license to app. Inherits API key scope if omitted.</td>
+                        </tr>
+                        <tr>
                           <td className="py-1.5 px-2.5 text-indigo-300">prefix</td>
                           <td className="py-1.5 px-2.5 text-slate-400">string</td>
                           <td className="py-1.5 px-2.5">"VCON"</td>
@@ -891,6 +933,7 @@ print(license['key'], license['pin'])`;
 {
   "prefix": "STORE",
   "tier": "Pro",
+  "app_slug": "youtube-tag-generator",
   "validity_type": "hourly",
   "validity_value": 24,
   "device_limit": 1
@@ -903,7 +946,9 @@ print(license['key'], license['pin'])`;
   "license": {
     "key": "STORE-91B2-C4D8-E7F0",
     "pin": "4819",
-    "status": "active"
+    "status": "active",
+    "app_id": "app_8f912a",
+    "app_slug": "youtube-tag-generator"
   }
 }`}
                     </pre>

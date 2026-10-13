@@ -1,8 +1,11 @@
+import express from 'express';
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { after, test } from 'node:test';
+import { apiRouter, requireAdminApiKey } from '../src/server/api.js';
 import { generateAdminApiKey } from '../src/server/crypto.js';
 import { getDbClient, initDatabaseSchema } from '../src/server/db.js';
-import { requireAdminApiKey } from '../src/server/api.js';
 
 test('requireAdminApiKey rejects request without Authorization header', async () => {
   const middleware = requireAdminApiKey('licenses:create');
@@ -226,4 +229,290 @@ test('requireAdminApiKey enforces rate limit when threshold is exceeded', async 
   assert.equal(statusSent, 429);
   assert.equal(jsonSent.success, false);
   assert.match(jsonSent.error, /Rate limit exceeded/);
+});
+
+// -------------------------------------------------------------
+// Phase 04: App-Specific & Scoped License Creation Integration Tests
+// -------------------------------------------------------------
+
+let testApp: express.Express;
+let testServer: Server | undefined;
+let testBaseUrl: string;
+
+async function startTestServer() {
+  if (testServer) return testBaseUrl;
+  testApp = express();
+  testApp.use(express.json());
+  testApp.use('/api', apiRouter);
+
+  await new Promise<void>((resolve) => {
+    const s = createServer(testApp);
+    testServer = s;
+    s.listen(0, '127.0.0.1', () => resolve());
+  });
+  const addr = (testServer as unknown as Server).address() as AddressInfo;
+  testBaseUrl = `http://127.0.0.1:${addr.port}`;
+  return testBaseUrl;
+}
+
+after(() => {
+  if (testServer) {
+    testServer.close();
+  }
+});
+
+test('POST /api/v1/admin/licenses creates global license when app_id/app_slug is omitted', async () => {
+  await initDatabaseSchema();
+  const url = await startTestServer();
+  const db = getDbClient();
+
+  const generated = generateAdminApiKey('global-key');
+  const now = Date.now();
+  await db.execute({
+    sql: `INSERT INTO admin_api_keys (id, name, key_prefix, secret_hash, permissions_json, app_id, last_used_at, status, created_at)
+          VALUES (?, 'Global Admin Key', ?, ?, ?, NULL, NULL, 'active', ?)`,
+    args: [
+      generated.id,
+      generated.keyPrefix,
+      generated.secretHash,
+      JSON.stringify(['licenses:create', 'licenses:read', 'licenses:manage']),
+      now,
+    ],
+  });
+
+  const res = await fetch(`${url}/api/v1/admin/licenses`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${generated.secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      tier: 'pro',
+      device_limit: 3,
+    }),
+  });
+
+  const data = await res.json();
+  assert.equal(res.status, 201);
+  assert.equal(data.success, true);
+  assert.equal(data.license.app_id, null);
+  assert.equal(data.license.tier, 'pro');
+  assert.equal(data.license.device_limit, 3);
+});
+
+test('POST /api/v1/admin/licenses creates app-specific license when app_id is provided', async () => {
+  await initDatabaseSchema();
+  const url = await startTestServer();
+  const db = getDbClient();
+
+  const appId = 'app_' + Math.random().toString(36).substring(2, 10);
+  const appSlug = 'test-app-' + Math.random().toString(36).substring(2, 8);
+  await db.execute({
+    sql: `INSERT INTO apps (id, display_name, app_slug, app_secret, created_at, updated_at) VALUES (?, 'Test App', ?, 'sec_123', ?, ?)`,
+    args: [appId, appSlug, Date.now(), Date.now()],
+  });
+
+  const generated = generateAdminApiKey('global-key-2');
+  await db.execute({
+    sql: `INSERT INTO admin_api_keys (id, name, key_prefix, secret_hash, permissions_json, app_id, last_used_at, status, created_at)
+          VALUES (?, 'Global Key 2', ?, ?, ?, NULL, NULL, 'active', ?)`,
+    args: [
+      generated.id,
+      generated.keyPrefix,
+      generated.secretHash,
+      JSON.stringify(['licenses:create']),
+      Date.now(),
+    ],
+  });
+
+  const res = await fetch(`${url}/api/v1/admin/licenses`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${generated.secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      app_id: appId,
+      tier: 'enterprise',
+    }),
+  });
+
+  const data = await res.json();
+  assert.equal(res.status, 201);
+  assert.equal(data.success, true);
+  assert.equal(data.license.app_id, appId);
+  assert.equal(data.license.app_slug, appSlug);
+});
+
+test('POST /api/v1/admin/licenses resolves app_slug to app_id when app_slug is provided', async () => {
+  await initDatabaseSchema();
+  const url = await startTestServer();
+  const db = getDbClient();
+
+  const appId = 'app_slug_' + Math.random().toString(36).substring(2, 10);
+  const appSlug = 'my-custom-plugin-' + Math.random().toString(36).substring(2, 6);
+  await db.execute({
+    sql: `INSERT INTO apps (id, display_name, app_slug, app_secret, created_at, updated_at) VALUES (?, 'Custom Plugin App', ?, 'sec_123', ?, ?)`,
+    args: [appId, appSlug, Date.now(), Date.now()],
+  });
+
+  const generated = generateAdminApiKey('global-key-3');
+  await db.execute({
+    sql: `INSERT INTO admin_api_keys (id, name, key_prefix, secret_hash, permissions_json, app_id, last_used_at, status, created_at)
+          VALUES (?, 'Global Key 3', ?, ?, ?, NULL, NULL, 'active', ?)`,
+    args: [
+      generated.id,
+      generated.keyPrefix,
+      generated.secretHash,
+      JSON.stringify(['licenses:create']),
+      Date.now(),
+    ],
+  });
+
+  const res = await fetch(`${url}/api/v1/admin/licenses`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${generated.secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      app_slug: appSlug,
+      tier: 'starter',
+    }),
+  });
+
+  const data = await res.json();
+  assert.equal(res.status, 201);
+  assert.equal(data.success, true);
+  assert.equal(data.license.app_id, appId);
+  assert.equal(data.license.app_slug, appSlug);
+});
+
+test('POST /api/v1/admin/licenses automatically inherits app_id from app-scoped API key', async () => {
+  await initDatabaseSchema();
+  const url = await startTestServer();
+  const db = getDbClient();
+
+  const appId = 'app_scoped_' + Math.random().toString(36).substring(2, 10);
+  const appSlug = 'scoped-app-slug-' + Math.random().toString(36).substring(2, 6);
+  await db.execute({
+    sql: `INSERT INTO apps (id, display_name, app_slug, app_secret, created_at, updated_at) VALUES (?, 'Scoped App', ?, 'sec_123', ?, ?)`,
+    args: [appId, appSlug, Date.now(), Date.now()],
+  });
+
+  const generated = generateAdminApiKey('scoped-key');
+  await db.execute({
+    sql: `INSERT INTO admin_api_keys (id, name, key_prefix, secret_hash, permissions_json, app_id, last_used_at, status, created_at)
+          VALUES (?, 'Scoped App Key', ?, ?, ?, ?, NULL, 'active', ?)`,
+    args: [
+      generated.id,
+      generated.keyPrefix,
+      generated.secretHash,
+      JSON.stringify(['licenses:create']),
+      appId,
+      Date.now(),
+    ],
+  });
+
+  const res = await fetch(`${url}/api/v1/admin/licenses`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${generated.secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      tier: 'basic',
+    }),
+  });
+
+  const data = await res.json();
+  assert.equal(res.status, 201);
+  assert.equal(data.success, true);
+  assert.equal(data.license.app_id, appId);
+  assert.equal(data.license.app_slug, appSlug);
+});
+
+test('POST /api/v1/admin/licenses rejects cross-app license creation with 403 Forbidden', async () => {
+  await initDatabaseSchema();
+  const url = await startTestServer();
+  const db = getDbClient();
+
+  const appId1 = 'app_bound_1_' + Math.random().toString(36).substring(2, 10);
+  const appId2 = 'app_bound_2_' + Math.random().toString(36).substring(2, 10);
+  const appSlug1 = 'app-1-slug-' + Math.random().toString(36).substring(2, 8);
+  const appSlug2 = 'app-2-slug-' + Math.random().toString(36).substring(2, 8);
+  await db.execute({
+    sql: `INSERT INTO apps (id, display_name, app_slug, app_secret, created_at, updated_at) VALUES (?, 'App 1', ?, 'sec_123', ?, ?)`,
+    args: [appId1, appSlug1, Date.now(), Date.now()],
+  });
+  await db.execute({
+    sql: `INSERT INTO apps (id, display_name, app_slug, app_secret, created_at, updated_at) VALUES (?, 'App 2', ?, 'sec_123', ?, ?)`,
+    args: [appId2, appSlug2, Date.now(), Date.now()],
+  });
+
+  const generated = generateAdminApiKey('scoped-key-bound-1');
+  await db.execute({
+    sql: `INSERT INTO admin_api_keys (id, name, key_prefix, secret_hash, permissions_json, app_id, last_used_at, status, created_at)
+          VALUES (?, 'App 1 Scoped Key', ?, ?, ?, ?, NULL, 'active', ?)`,
+    args: [
+      generated.id,
+      generated.keyPrefix,
+      generated.secretHash,
+      JSON.stringify(['licenses:create']),
+      appId1,
+      Date.now(),
+    ],
+  });
+
+  const res = await fetch(`${url}/api/v1/admin/licenses`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${generated.secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      app_id: appId2,
+      tier: 'pro',
+    }),
+  });
+
+  const data = await res.json();
+  assert.equal(res.status, 403);
+  assert.equal(data.success, false);
+  assert.match(data.error, /Forbidden: This API key is restricted to application ID/);
+});
+
+test('POST /api/v1/admin/licenses returns 400 Bad Request when non-existent app is specified', async () => {
+  await initDatabaseSchema();
+  const url = await startTestServer();
+  const db = getDbClient();
+
+  const generated = generateAdminApiKey('global-key-invalid-app');
+  await db.execute({
+    sql: `INSERT INTO admin_api_keys (id, name, key_prefix, secret_hash, permissions_json, app_id, last_used_at, status, created_at)
+          VALUES (?, 'Global Key Invalid App', ?, ?, ?, NULL, NULL, 'active', ?)`,
+    args: [
+      generated.id,
+      generated.keyPrefix,
+      generated.secretHash,
+      JSON.stringify(['licenses:create']),
+      Date.now(),
+    ],
+  });
+
+  const res = await fetch(`${url}/api/v1/admin/licenses`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${generated.secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      app_slug: 'this-app-slug-does-not-exist-xyz',
+    }),
+  });
+
+  const data = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(data.success, false);
+  assert.match(data.error, /Invalid app specified/);
 });
