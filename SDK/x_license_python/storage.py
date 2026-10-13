@@ -1,14 +1,10 @@
 """
-VCON Python Client SDK - Storage & Background Daemon Engine
-Manages secure local session storage in OS temp directory for auto-login,
-and runs a lightweight background daemon thread to monitor periodic server validation (every 20 mins)
-with zero UI lag and minimal CPU/RAM footprint.
+VCON Python Client SDK - Session Persistence & Background Daemon Engine
+Rejects insecure temp-file sessions and runs a lightweight background daemon
+thread to monitor periodic server validation (every 20 mins).
 """
 
 import os
-import json
-import time
-import base64
 import tempfile
 import threading
 from typing import Optional, Dict, Any, Callable
@@ -42,41 +38,12 @@ class BackgroundLicenseWorker:
     # -------------------------------------------------------------
 
     def save_session(self, license_key: str, license_data: Dict[str, Any]) -> None:
-        """Saves current license key & metadata securely in OS temp directory"""
-        try:
-            payload = {
-                "license_key": license_key,
-                "saved_at": int(time.time()),
-                "app_name": self.app_name,
-                "data": license_data,
-            }
-            # Simple obfuscation
-            raw = json.dumps(payload).encode("utf-8")
-            b64 = base64.b64encode(raw).decode("utf-8")
-
-            with open(self._session_file, "w", encoding="utf-8") as f:
-                f.write(b64)
-        except Exception as e:
-            print(f"[VCON-SDK] Warning: Could not save session: {e}")
+        """Disable persistence until a secure OS credential store is available."""
+        self.clear_session()
 
     def load_saved_session(self) -> Optional[str]:
-        """Loads saved license key for auto-login attempt"""
-        if not os.path.exists(self._session_file):
-            return None
-
-        try:
-            with open(self._session_file, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-
-            if not content:
-                return None
-
-            raw = base64.b64decode(content.encode("utf-8")).decode("utf-8")
-            payload = json.loads(raw)
-            if payload.get("app_name") == self.app_name:
-                return payload.get("license_key")
-        except Exception:
-            self.clear_session()
+        """Reject legacy temp-file sessions until secure storage is available."""
+        self.clear_session()
         return None
 
     def clear_session(self) -> None:

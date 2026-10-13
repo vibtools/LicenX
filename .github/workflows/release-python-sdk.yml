@@ -69,6 +69,14 @@ jobs:
               output.write(f"version={sdk_version}\n")
           PY
 
+      - name: Install SDK test dependencies
+        run: python -m pip install -r SDK/x_license_python/requirements.txt
+
+      - name: Run SDK unit tests
+        env:
+          PYTHONPATH: SDK
+        run: python -m unittest discover -s SDK/x_license_python/test -p 'test_*.py'
+
       - name: Generate SDK archive
         run: npm run build:sdk-archive
 

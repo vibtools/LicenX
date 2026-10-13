@@ -1,25 +1,23 @@
-import React, { useState, useEffect } from 'react';
 import {
-  Webhook,
-  Plus,
-  Key,
-  Copy,
-  Check,
-  Trash2,
-  Play,
-  Code,
-  Shield,
-  Clock,
   AlertCircle,
-  RefreshCw,
   BookOpen,
-  Layers,
+  Check,
   CheckCircle2,
-  Zap,
+  Clock,
+  Code,
+  Copy,
+  Key,
+  Play,
+  Plus,
+  RefreshCw,
+  Shield,
+  Trash2,
+  Webhook
 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { useConfirm } from '../context/ConfirmContext';
 import { api } from '../services/apiClient';
 import { AdminApiKeyRecord, CreatedAdminApiKey } from '../types';
-import { useConfirm } from '../context/ConfirmContext';
 
 interface AdminApisTabProps {
   onNavigateToTab?: (tab: string) => void;

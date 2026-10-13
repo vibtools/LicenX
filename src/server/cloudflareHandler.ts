@@ -2,9 +2,9 @@ import crypto from "node:crypto";
 import {
   canonicalJson,
   createSessionToken,
+  generateAdminApiKey,
   generateLicenseKey,
   generateLicensePin,
-  generateAdminApiKey,
   generateRSAKeyPair,
   hashAdminApiSecret,
   hashPassword,
@@ -15,7 +15,7 @@ import {
 import { getDbClient, initDatabaseSchema, isTursoPlaceholder } from "./db.js";
 import { bindDeviceWithinLimit } from "./deviceBinding.js";
 import { isPublicAccessEnabled } from "./publicAccessSettings.js";
-import { R2Config, testR2Connection, uploadToR2, getR2Object } from "./r2.js";
+import { getR2Object, R2Config, testR2Connection, uploadToR2 } from "./r2.js";
 import {
   clearUserControlPinAttempts,
   getUserControlPinRateLimit,
@@ -122,7 +122,10 @@ async function verifyAdminAuth(
 
 // Verify Admin API Key with permissions check for Cloudflare
 // In-memory rate limiting map for Cloudflare worker instance
-const cfAdminApiRateLimits = new Map<string, { count: number; windowStart: number }>();
+const cfAdminApiRateLimits = new Map<
+  string,
+  { count: number; windowStart: number }
+>();
 const CF_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const CF_RATE_LIMIT_MAX_REQUESTS = 120;
 
@@ -130,9 +133,17 @@ async function verifyAdminApiKey(
   request: Request,
   env: any,
   requiredScope?: string,
-): Promise<{ authorized: boolean; apiKey?: any; error?: string; status?: number }> {
+): Promise<{
+  authorized: boolean;
+  apiKey?: any;
+  error?: string;
+  status?: number;
+}> {
   try {
-    const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown";
+    const clientIp =
+      request.headers.get("cf-connecting-ip") ||
+      request.headers.get("x-forwarded-for") ||
+      "unknown";
     const now = Date.now();
     const rateLimitKey = "cf_admin_api_" + clientIp;
     const rateEntry = cfAdminApiRateLimits.get(rateLimitKey);
@@ -142,7 +153,8 @@ async function verifyAdminApiKey(
         if (rateEntry.count >= CF_RATE_LIMIT_MAX_REQUESTS) {
           return {
             authorized: false,
-            error: "Too Many Requests: Rate limit exceeded (max 120 requests/minute). Please slow down.",
+            error:
+              "Too Many Requests: Rate limit exceeded (max 120 requests/minute). Please slow down.",
             status: 429,
           };
         }
@@ -159,7 +171,8 @@ async function verifyAdminApiKey(
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return {
         authorized: false,
-        error: "Unauthorized: Missing or malformed Bearer token in Authorization header",
+        error:
+          "Unauthorized: Missing or malformed Bearer token in Authorization header",
         status: 401,
       };
     }
@@ -205,7 +218,10 @@ async function verifyAdminApiKey(
         permissions = [];
       }
 
-      if (!permissions.includes(requiredScope) && !permissions.includes("admin:*")) {
+      if (
+        !permissions.includes(requiredScope) &&
+        !permissions.includes("admin:*")
+      ) {
         return {
           authorized: false,
           error: "Forbidden: API key lacks required scope " + requiredScope,
@@ -234,7 +250,7 @@ async function verifyAdminApiKey(
   } catch (error: any) {
     return {
       authorized: false,
-      error: error.message || "Failed to authenticate Admin API key",
+      error: SAFE_SERVER_ERROR,
       status: 500,
     };
   }
@@ -2229,13 +2245,8 @@ export async function handleCloudflareApi(
       if (!auth.authorized)
         return errorResponse(auth.error || "Unauthorized", 401);
 
-      const {
-        accountId,
-        accessKeyId,
-        secretAccessKey,
-        bucketName,
-        publicUrl,
-      } = body;
+      const { accountId, accessKeyId, secretAccessKey, bucketName, publicUrl } =
+        body;
       let finalSecret = (secretAccessKey || "").trim();
 
       if (
@@ -2251,7 +2262,10 @@ export async function handleCloudflareApi(
             const parsed = JSON.parse(
               existing.rows[0].r2_config_json as string,
             );
-            if (parsed.secretAccessKey && !parsed.secretAccessKey.includes("•")) {
+            if (
+              parsed.secretAccessKey &&
+              !parsed.secretAccessKey.includes("•")
+            ) {
               finalSecret = parsed.secretAccessKey.trim();
             }
           } catch {
@@ -2307,7 +2321,10 @@ export async function handleCloudflareApi(
             const parsed = JSON.parse(
               existing.rows[0].r2_config_json as string,
             );
-            if (parsed.secretAccessKey && !parsed.secretAccessKey.includes("•")) {
+            if (
+              parsed.secretAccessKey &&
+              !parsed.secretAccessKey.includes("•")
+            ) {
               finalSecret = parsed.secretAccessKey.trim();
             }
           } catch {
@@ -2589,19 +2606,20 @@ export async function handleCloudflareApi(
       });
     }
 
-
     // -----------------------------------------------------------------
     // ADMIN PANEL API KEY MANAGEMENT ENDPOINTS (Session Authenticated)
     // -----------------------------------------------------------------
     if (
-      (normalizedPath === "/admin-api-keys" || normalizedPath === "/api/admin-api-keys") &&
+      (normalizedPath === "/admin-api-keys" ||
+        normalizedPath === "/api/admin-api-keys") &&
       method === "GET"
     ) {
       const auth = await verifyAdminAuth(request, env);
-      if (!auth.authorized) return errorResponse(auth.error || "Unauthorized", 401);
+      if (!auth.authorized)
+        return errorResponse(auth.error || "Unauthorized", 401);
 
       const result = await db.execute(
-        "SELECT id, name, key_prefix, permissions_json, app_id, last_used_at, status, created_at FROM admin_api_keys ORDER BY created_at DESC"
+        "SELECT id, name, key_prefix, permissions_json, app_id, last_used_at, status, created_at FROM admin_api_keys ORDER BY created_at DESC",
       );
       return jsonResponse({
         success: true,
@@ -2610,11 +2628,13 @@ export async function handleCloudflareApi(
     }
 
     if (
-      (normalizedPath === "/admin-api-keys" || normalizedPath === "/api/admin-api-keys") &&
+      (normalizedPath === "/admin-api-keys" ||
+        normalizedPath === "/api/admin-api-keys") &&
       method === "POST"
     ) {
       const auth = await verifyAdminAuth(request, env);
-      if (!auth.authorized) return errorResponse(auth.error || "Unauthorized", 401);
+      if (!auth.authorized)
+        return errorResponse(auth.error || "Unauthorized", 401);
 
       const {
         name,
@@ -2632,7 +2652,7 @@ export async function handleCloudflareApi(
       const permsJson = JSON.stringify(
         Array.isArray(permissions) && permissions.length > 0
           ? permissions
-          : ["licenses:create", "licenses:read", "licenses:manage"]
+          : ["licenses:create", "licenses:read", "licenses:manage"],
       );
 
       await db.execute({
@@ -2662,7 +2682,7 @@ export async function handleCloudflareApi(
             created_at: now,
           },
         },
-        201
+        201,
       );
     }
 
@@ -2672,7 +2692,8 @@ export async function handleCloudflareApi(
       method === "DELETE"
     ) {
       const auth = await verifyAdminAuth(request, env);
-      if (!auth.authorized) return errorResponse(auth.error || "Unauthorized", 401);
+      if (!auth.authorized)
+        return errorResponse(auth.error || "Unauthorized", 401);
 
       const keyId = normalizedPath.replace(/^\/(api\/)?admin-api-keys\//, "");
       await db.execute({
@@ -2718,9 +2739,13 @@ export async function handleCloudflareApi(
       // 1. Resolve target app (by app_id or app_slug)
       let resolvedAppId: string | null = null;
       let resolvedAppSlug: string | null = null;
-      const requestedAppIdentifier = (app_id || app_slug) ? String(app_id || app_slug).trim() : null;
+      const requestedAppIdentifier =
+        app_id || app_slug ? String(app_id || app_slug).trim() : null;
 
-      if (requestedAppIdentifier && requestedAppIdentifier.toLowerCase() !== "global") {
+      if (
+        requestedAppIdentifier &&
+        requestedAppIdentifier.toLowerCase() !== "global"
+      ) {
         const appRes = await db.execute({
           sql: "SELECT id, app_slug FROM apps WHERE id = ? OR app_slug = ? LIMIT 1",
           args: [requestedAppIdentifier, requestedAppIdentifier],
@@ -2758,7 +2783,9 @@ export async function handleCloudflareApi(
         );
       }
 
-      const finalKey = key ? key.trim().toUpperCase() : generateLicenseKey(prefix);
+      const finalKey = key
+        ? key.trim().toUpperCase()
+        : generateLicenseKey(prefix);
       const pin = generateLicensePin();
       const id = "lic_" + crypto.randomBytes(8).toString("hex");
       const now = Date.now();
@@ -2820,8 +2847,10 @@ export async function handleCloudflareApi(
         return errorResponse(auth.error || "Unauthorized", auth.status || 401);
       }
 
-      const keyParam = normalizedPath
-        .replace(/^\/(api\/)?v1\/admin\/licenses\//, "");
+      const keyParam = normalizedPath.replace(
+        /^\/(api\/)?v1\/admin\/licenses\//,
+        "",
+      );
       if (!keyParam) {
         return errorResponse("Missing license key", 400);
       }
@@ -2840,7 +2869,11 @@ export async function handleCloudflareApi(
       const now = Date.now();
       let currentStatus = lic.status as string;
 
-      if (lic.expires_at && now > Number(lic.expires_at) && currentStatus === "active") {
+      if (
+        lic.expires_at &&
+        now > Number(lic.expires_at) &&
+        currentStatus === "active"
+      ) {
         currentStatus = "expired";
         await db.execute({
           sql: "UPDATE licenses SET status = 'expired' WHERE id = ?",
@@ -2913,7 +2946,8 @@ export async function handleCloudflareApi(
 
       return jsonResponse({
         success: true,
-        message: "All devices unbound successfully. License is fresh and ready for new hardware.",
+        message:
+          "All devices unbound successfully. License is fresh and ready for new hardware.",
         reset_devices_count: deleteRes.rowsAffected ?? 0,
       });
     }
@@ -2976,9 +3010,6 @@ export async function handleCloudflareApi(
     );
   } catch (error: any) {
     console.error("[Cloudflare API Error]: Internal server error");
-    return jsonResponse(
-      { error: SAFE_SERVER_ERROR },
-      500,
-    );
+    return jsonResponse({ error: SAFE_SERVER_ERROR }, 500);
   }
 }

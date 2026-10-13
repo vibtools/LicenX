@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import json
+import base64
 import ipaddress
 import socket
 import platform
@@ -397,19 +398,16 @@ class DiagnosticEngine:
         return True, f"Python {py_ver} on {os_name}"
 
     def _test_hardware_hwid(self) -> Tuple[bool, str]:
-        telemetry = DeviceManager.get_device_telemetry()
-        hwid1 = telemetry.get("hwid", "")
+        hwid1 = DeviceManager.get_hwid()
         hwid2 = DeviceManager.get_hwid()
 
         if not hwid1 or len(hwid1) < 16:
-            return False, f"Generated HWID is empty or too short: '{hwid1}'"
+            return False, "Generated HWID is empty or too short"
         if hwid1 != hwid2:
             return False, "HWID calculation is non-deterministic (changed between calls)!"
 
-        mac = telemetry.get("mac", "unknown")
-        cpu = telemetry.get("cpu", "unknown")
-        self.log(f"Calculated HWID: {hwid1} (CPU: {cpu}, MAC: {mac})", "INFO")
-        return True, f"Deterministic HWID verified ({hwid1[:12]}...)"
+        self.log("Generated device identifier is deterministic; value redacted", "INFO")
+        return True, "Deterministic HWID verified; value redacted"
 
     def _test_configuration(self) -> Tuple[bool, str]:
         if not self.config.server_url.startswith(("http://", "https://")):
@@ -479,7 +477,7 @@ class DiagnosticEngine:
     def _test_fake_key_rejection(self) -> Tuple[bool, str]:
         dummy_key = "VCON-FAKE-TEST-KEY-0000-NONEXISTENT"
         hwid = self.client.get_hwid()
-        telemetry = DeviceManager.get_device_telemetry()
+        telemetry = DeviceManager.get_validation_telemetry()
 
         is_valid, status, data = self.communicator.validate_license(dummy_key, hwid, telemetry)
 
@@ -497,7 +495,7 @@ class DiagnosticEngine:
             return True, "Skipped (Enter a license key to test full validation)"
 
         hwid = self.client.get_hwid()
-        telemetry = DeviceManager.get_device_telemetry()
+        telemetry = DeviceManager.get_validation_telemetry()
         is_valid, status, data = self.communicator.validate_license(key, hwid, telemetry)
 
         if not is_valid:
@@ -515,7 +513,7 @@ class DiagnosticEngine:
             return True, "Skipped (No license key entered for live signature verification)"
 
         hwid = self.client.get_hwid()
-        telemetry = DeviceManager.get_device_telemetry()
+        telemetry = DeviceManager.get_validation_telemetry()
 
         url = self.communicator._build_url("api/v1/license/validate")
         body = {
@@ -526,7 +524,6 @@ class DiagnosticEngine:
             "app_name": self.config.app_name,
             "app_version": self.config.min_version,
             "client_time": int(time.time() * 1000),
-            "telemetry": telemetry,
         }
         status, data = self.communicator._http_post(url, body, 10)
 
@@ -585,13 +582,24 @@ class DiagnosticEngine:
 
         try:
             worker.save_session(test_key, test_payload)
-            if worker.load_saved_session() != test_key:
-                return False, "Session storage round-trip failed"
+            if os.path.exists(worker._session_file):
+                return False, "Session key was persisted without a secure credential store"
+            if worker.load_saved_session() is not None:
+                return False, "Disabled session storage returned a saved key"
+
+            legacy_payload = {"license_key": test_key, "app_name": test_app}
+            legacy_data = base64.b64encode(
+                json.dumps(legacy_payload).encode("utf-8")
+            ).decode("utf-8")
+            with open(worker._session_file, "w", encoding="utf-8") as session_file:
+                session_file.write(legacy_data)
+            if worker.load_saved_session() is not None or os.path.exists(worker._session_file):
+                return False, "Legacy Base64 session was accepted or not removed"
         finally:
             worker.clear_session()
 
         if worker.load_saved_session() is not None:
-            return False, "Session storage cleanup failed"
+            return False, "Disabled session storage returned a saved key after cleanup"
 
         now_ms = int(time.time() * 1000)
         if OfflineGuard.is_clock_tampered(now_ms + 60000):
@@ -599,7 +607,7 @@ class DiagnosticEngine:
         if not OfflineGuard.is_clock_tampered(now_ms + 16 * 60 * 1000):
             return False, "Clock guard accepted a timestamp beyond the 15-minute limit"
 
-        return True, "Session storage round-trip/cleanup and clock drift checks passed; storage is Base64-obfuscated, not encrypted"
+        return True, "Session keys are not persisted; legacy Base64 data is not encrypted and is rejected; clock drift checks passed"
 
     def _test_logout_protocol(self, active_key: Optional[str]) -> Tuple[bool, str]:
         key = active_key or self.client.get_current_key()
@@ -619,7 +627,6 @@ class DiagnosticEngine:
         """Generates clean, structured diagnostic report text for sharing"""
         sep = "=" * 70
         sub_sep = "-" * 70
-        hwid = self.client.get_hwid()
         telemetry = DeviceManager.get_device_telemetry()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         active_key = self.client.get_current_key()
@@ -648,10 +655,10 @@ class DiagnosticEngine:
             sub_sep,
             f"Operating System: {platform.system()} {platform.release()} ({platform.machine()})",
             f"Python Runtime  : {sys.version.split()[0]} ({platform.python_implementation()})",
-            f"Machine Hostname: {socket.gethostname()}",
-            f"Device HWID     : {hwid}",
-            f"CPU Info        : {telemetry.get('cpu', 'unknown')}",
-            f"MAC Address     : {telemetry.get('mac', 'unknown')}",
+            "Machine Hostname: [REDACTED]",
+            "Device HWID     : [REDACTED]",
+            "CPU Info        : [REDACTED]",
+            "MAC Address     : [REDACTED]",
             "",
             "2. SDK & BACKEND CONFIGURATION:",
             sub_sep,
@@ -695,7 +702,32 @@ class DiagnosticEngine:
         report_lines.append("End of Diagnostic Report. Upload this log to your engineer for analysis.")
         report_lines.append(sep)
 
-        return "\n".join(report_lines)
+        report = "\n".join(report_lines)
+        sensitive_values = {
+            self.client.get_hwid(),
+            socket.gethostname(),
+            platform.node(),
+        }
+        for field in (
+            "hwid",
+            "device_name",
+            "mac",
+            "mac_address",
+            "motherboard_uuid",
+            "disk_serial",
+            "cpu",
+            "cpu_info",
+            "local_ip",
+            "public_ip",
+        ):
+            value = telemetry.get(field)
+            if value:
+                sensitive_values.add(str(value))
+
+        for value in sorted(sensitive_values, key=len, reverse=True):
+            if value:
+                report = report.replace(value, "[REDACTED]")
+        return report
 
 
 # ===========================================================================

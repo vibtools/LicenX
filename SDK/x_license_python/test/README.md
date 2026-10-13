@@ -47,7 +47,7 @@ python app.py --cli
 
 2. **Complete SDK Login System:**
    - **Interactive Login:** Enter your license key to activate. PIN is only for web-panel license control.
-   - **Auto-Login:** Automatically recovers and validates saved sessions on startup.
+   - **Auto-Login:** Attempts online validation of a saved session; persistent key storage is currently disabled, so users must enter the key again after restarting.
    - **Heartbeat Ping:** Test on-demand pinging and background thread health.
    - **Logout & Unbind:** Releases machine slot on the server immediately so another machine can use it.
    - **Admin Logout Observation:** While logged in, arm the 120-second observer, then log out/unlink this device in the Admin Panel. The test console checks the SDK's next 5-second heartbeat, clears its local session when the server reports `DEVICE_UNBOUND`, and records the result.
@@ -65,8 +65,8 @@ python app.py --cli
      - Stage 8: Live License Validation Protocol
      - Stage 9: Cryptographic Signature & Tamper Resistance Verification
      - Stage 10: Heartbeat Ping & Server Time Synchronization (<60s drift)
-       - Stage 11: Local session storage round-trip/cleanup and clock-drift guard boundaries (session data is Base64-obfuscated, not encrypted).
-       - Stage 12: Actual SDK logout followed by a heartbeat that must return `DEVICE_UNBOUND`.
+     - Stage 11: Confirms session keys are not persisted, legacy Base64 sessions are rejected and removed, and clock-drift guard boundaries hold.
+     - Stage 12: Actual SDK logout followed by a heartbeat that must return `DEVICE_UNBOUND`.
 
    Full diagnostics end by logging out the active test license and clearing its local saved session. Use only a dedicated disposable test license. A passing diagnostic run checks this configured target; it is not production-readiness certification.
 

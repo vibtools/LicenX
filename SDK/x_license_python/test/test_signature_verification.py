@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import unittest
 from unittest.mock import Mock, patch
 
@@ -22,15 +23,15 @@ class SignatureVerificationTests(unittest.TestCase):
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ).decode("utf-8")
 
-    def test_ed25519_rejects_unverifiable_signature_without_cryptography(self):
+    def test_ed25519_rejects_valid_signature_without_cryptography(self):
         private_key = ed25519.Ed25519PrivateKey.generate()
         communicator = ServerCommunicator(
             SDKConfig(public_key_pem=self.public_key_pem(private_key.public_key()))
         )
-        invalid_signature = base64.b64encode(b"invalid").decode("ascii")
+        signature = base64.b64encode(private_key.sign(self.message)).decode("ascii")
 
         with patch("x_license_python.server.HAS_CRYPTOGRAPHY", False):
-            self.assertFalse(communicator.verify_signature(self.payload, invalid_signature))
+            self.assertFalse(communicator.verify_signature(self.payload, signature))
 
     def test_ed25519_valid_and_invalid_signatures_with_cryptography(self):
         private_key = ed25519.Ed25519PrivateKey.generate()
@@ -44,7 +45,19 @@ class SignatureVerificationTests(unittest.TestCase):
             self.assertTrue(communicator.verify_signature(self.payload, valid_signature))
             self.assertFalse(communicator.verify_signature(self.payload, invalid_signature))
 
-    def test_rsa_fallback_accepts_valid_and_rejects_invalid_signatures(self):
+    def test_rsa_rejects_valid_signature_without_cryptography(self):
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        communicator = ServerCommunicator(
+            SDKConfig(public_key_pem=self.public_key_pem(private_key.public_key()))
+        )
+        signature = base64.b64encode(
+            private_key.sign(self.message, padding.PKCS1v15(), hashes.SHA256())
+        ).decode("ascii")
+
+        with patch("x_license_python.server.HAS_CRYPTOGRAPHY", False):
+            self.assertFalse(communicator.verify_signature(self.payload, signature))
+
+    def test_rsa_rejects_invalid_signature_with_cryptography(self):
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         communicator = ServerCommunicator(
             SDKConfig(public_key_pem=self.public_key_pem(private_key.public_key()))
@@ -54,9 +67,39 @@ class SignatureVerificationTests(unittest.TestCase):
         ).decode("ascii")
         invalid_signature = base64.b64encode(b"invalid").decode("ascii")
 
-        with patch("x_license_python.server.HAS_CRYPTOGRAPHY", False):
+        with patch("x_license_python.server.HAS_CRYPTOGRAPHY", True):
             self.assertTrue(communicator.verify_signature(self.payload, valid_signature))
             self.assertFalse(communicator.verify_signature(self.payload, invalid_signature))
+
+    def test_rsa_rejects_malformed_pkcs1_v15_padding(self):
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        private_numbers = private_key.private_numbers()
+        public_key = private_key.public_key()
+        communicator = ServerCommunicator(
+            SDKConfig(public_key_pem=self.public_key_pem(public_key))
+        )
+        digest_info = bytes.fromhex(
+            "3031300d060960864801650304020105000420"
+        ) + hashlib.sha256(self.message).digest()
+        encoded_message_length = (private_key.key_size + 7) // 8
+        malformed_block = (
+            b"\x00\x01\x00"
+            + b"\xff" * (encoded_message_length - len(digest_info) - 3)
+            + digest_info
+        )
+        malformed_signature = pow(
+            int.from_bytes(malformed_block, "big"),
+            private_numbers.d,
+            private_numbers.public_numbers.n,
+        ).to_bytes(encoded_message_length, "big")
+
+        with patch("x_license_python.server.HAS_CRYPTOGRAPHY", True):
+            self.assertFalse(
+                communicator.verify_signature(
+                    self.payload,
+                    base64.b64encode(malformed_signature).decode("ascii"),
+                )
+            )
 
     def test_validate_rejects_response_key_when_no_trust_anchor_is_configured(self):
         response_key = ed25519.Ed25519PrivateKey.generate()

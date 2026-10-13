@@ -113,7 +113,9 @@ test("Node unexpected errors are sanitized to a generic 5xx message", async () =
   const originalExecute = db.execute.bind(db);
   Object.defineProperty(db, "execute", {
     value: async () => {
-      throw new Error("Sensitive DB info: file /var/lib/vcon/app.db has SQL leak");
+      throw new Error(
+        "Sensitive DB info: file /var/lib/vcon/app.db has SQL leak",
+      );
     },
     configurable: true,
   });
@@ -134,7 +136,9 @@ test("Cloudflare unexpected errors are sanitized to a generic 5xx message", asyn
   const originalExecute = db.execute.bind(db);
   Object.defineProperty(db, "execute", {
     value: async () => {
-      throw new Error("Sensitive Cloudflare env values: DSN postgres://prod-secret");
+      throw new Error(
+        "Sensitive Cloudflare env values: DSN postgres://prod-secret",
+      );
     },
     configurable: true,
   });
@@ -143,6 +147,61 @@ test("Cloudflare unexpected errors are sanitized to a generic 5xx message", asyn
     const response = await getCloudflare("/setup/status");
     assert.equal(response.status, 500);
     assert.deepEqual(await response.json(), { error: "Internal server error" });
+  } finally {
+    Object.defineProperty(db, "execute", {
+      value: originalExecute,
+      configurable: true,
+    });
+  }
+});
+
+test("Node and Cloudflare Admin API-key failures hide internal exception text", async () => {
+  const originalExecute = db.execute.bind(db);
+  Object.defineProperty(db, "execute", {
+    value: async () => {
+      throw new Error(
+        "Sensitive Admin DB sentinel: connection credentials leaked",
+      );
+    },
+    configurable: true,
+  });
+
+  try {
+    const authorization = "Bearer vcon_sec_phase5-sentinel";
+    const nodeResponse = await fetch(`${baseUrl}/api/v1/admin/licenses`, {
+      method: "POST",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ tier: "pro" }),
+    });
+    const cloudflareResponse = await handleCloudflareApi(
+      new Request("https://licenx.test/api/v1/admin/licenses", {
+        method: "POST",
+        headers: {
+          Authorization: authorization,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tier: "pro" }),
+      }),
+      undefined,
+    );
+    const nodeBody = await nodeResponse.json();
+    const cloudflareBody = await cloudflareResponse.json();
+
+    assert.equal(nodeResponse.status, 500);
+    assert.equal(cloudflareResponse.status, 500);
+    assert.equal(nodeBody.error, "Internal server error");
+    assert.equal(cloudflareBody.error, "Internal server error");
+    assert.doesNotMatch(
+      JSON.stringify(nodeBody),
+      /Sensitive Admin DB sentinel/,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(cloudflareBody),
+      /Sensitive Admin DB sentinel/,
+    );
   } finally {
     Object.defineProperty(db, "execute", {
       value: originalExecute,

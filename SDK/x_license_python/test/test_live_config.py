@@ -5,6 +5,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 from x_license_python.config import SDKConfig
+from x_license_python.device import DeviceManager
+from x_license_python.login import LoginManager
+from x_license_python.server import ServerCommunicator
 from x_license_python.test.app import (
     DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS,
     DiagnosticEngine,
@@ -214,6 +217,173 @@ class LiveConfigTests(unittest.TestCase):
 
         self.assertNotIn("VCON-LIVE-SECRET-KEY", report)
         self.assertIn("VCON-LIV***", report)
+
+    def test_diagnostic_report_redacts_hardware_and_host_identifiers(self):
+        identifiers = {
+            "hwid": "HWID-REPORT-1234-5678-ABCD-EF01",
+            "device_name": "host-report-secret",
+            "mac_address": "02:11:22:33:44:55",
+            "motherboard_uuid": "board-report-secret",
+            "disk_serial": "disk-report-secret",
+            "cpu_info": "cpu-report-secret",
+            "local_ip": "192.0.2.44",
+        }
+        client = Mock()
+        client.get_current_key.return_value = None
+        client.get_hwid.return_value = identifiers["hwid"]
+        client.get_tier.return_value = "Standard"
+        engine = DiagnosticEngine(
+            config=SDKConfig(),
+            client=client,
+            live_config_loaded=True,
+        )
+        engine.logs.append(
+            "diagnostic values: " + " ".join(identifiers.values())
+        )
+
+        with patch(
+            "x_license_python.test.app.DeviceManager.get_device_telemetry",
+            return_value=identifiers,
+        ), patch(
+            "x_license_python.test.app.socket.gethostname",
+            return_value="host-report-secret",
+        ), patch(
+            "x_license_python.test.app.platform.node",
+            return_value="host-report-secret",
+        ):
+            report = engine.generate_report_text()
+
+        for identifier in identifiers.values():
+            self.assertNotIn(identifier, report)
+        self.assertIn("Device HWID     : [REDACTED]", report)
+        self.assertIn("Machine Hostname: [REDACTED]", report)
+
+    def test_login_uses_validation_metadata_without_public_ip_lookup(self):
+        config = SDKConfig()
+        communicator = Mock()
+        communicator.validate_license.return_value = (
+            False,
+            404,
+            {"error": "License not found", "code": "NOT_FOUND"},
+        )
+        manager = LoginManager(config, communicator, Mock())
+        validation_metadata = {
+            "device_name": "test-host",
+            "os_info": "Test OS",
+        }
+
+        with patch.object(DeviceManager, "get_hwid", return_value="test-hwid"), patch.object(
+            DeviceManager,
+            "get_validation_telemetry",
+            return_value=validation_metadata,
+        ), patch.object(
+            DeviceManager,
+            "get_device_telemetry",
+            side_effect=AssertionError("full telemetry must not be collected for login"),
+        ), patch.object(
+            DeviceManager,
+            "get_public_ip",
+            side_effect=AssertionError("login must not look up public IP"),
+        ):
+            result = manager.login("vcon-test-key")
+
+        self.assertFalse(result.success)
+        communicator.validate_license.assert_called_once_with(
+            license_key="VCON-TEST-KEY",
+            hwid="test-hwid",
+            telemetry=validation_metadata,
+        )
+
+    def test_device_telemetry_looks_up_public_ip_only_when_requested(self):
+        with patch.object(DeviceManager, "_cached_telemetry", None), patch.object(
+            DeviceManager, "get_hwid", return_value="test-hwid"
+        ), patch.object(
+            DeviceManager, "get_motherboard_uuid", return_value="board-id"
+        ), patch.object(
+            DeviceManager, "get_disk_serial", return_value="disk-id"
+        ), patch.object(
+            DeviceManager, "get_cpu_info", return_value="cpu-model"
+        ), patch.object(
+            DeviceManager, "get_mac_address", return_value="02:11:22:33:44:55"
+        ), patch.object(
+            DeviceManager, "get_local_ip", return_value="192.0.2.10"
+        ), patch.object(
+            DeviceManager, "get_public_ip", return_value="198.51.100.20"
+        ) as public_ip_lookup:
+            local_telemetry = DeviceManager.get_device_telemetry()
+            public_ip_lookup.assert_not_called()
+            full_telemetry = DeviceManager.get_device_telemetry(include_public_ip=True)
+
+        self.assertNotIn("public_ip", local_telemetry)
+        self.assertEqual(full_telemetry["public_ip"], "198.51.100.20")
+        public_ip_lookup.assert_called_once_with()
+
+    def test_validation_request_omits_nested_full_telemetry(self):
+        communicator = ServerCommunicator(SDKConfig())
+        communicator._http_post = Mock(return_value=(400, {"error": "invalid"}))
+        telemetry = {
+            "device_name": "test-host",
+            "os_info": "Test OS",
+            "mac_address": "02:11:22:33:44:55",
+            "motherboard_uuid": "board-secret",
+            "public_ip": "198.51.100.9",
+        }
+
+        communicator.validate_license("VCON-TEST-KEY", "test-hwid", telemetry)
+
+        request_body = communicator._http_post.call_args.args[1]
+        self.assertEqual(
+            set(request_body),
+            {
+                "license_key",
+                "hwid",
+                "device_name",
+                "os_info",
+                "app_name",
+                "app_version",
+                "client_time",
+            },
+        )
+        self.assertEqual(request_body["device_name"], "test-host")
+        self.assertEqual(request_body["os_info"], "Test OS")
+
+    def test_diagnostic_signature_request_uses_only_validation_metadata(self):
+        client = Mock()
+        client.get_current_key.return_value = "VCON-TEST-KEY"
+        client.get_hwid.return_value = "test-hwid"
+        engine = DiagnosticEngine(
+            config=SDKConfig(app_name="vcon_default", min_version="1.0.0"),
+            client=client,
+            live_config_loaded=True,
+        )
+        engine.communicator._build_url.return_value = "https://license.test/validate"
+        engine.communicator._http_post.return_value = (
+            200,
+            {"valid": True, "signature": "signed-response"},
+        )
+        engine.communicator.verify_signature.side_effect = [True, False]
+
+        with patch.object(
+            DeviceManager,
+            "get_validation_telemetry",
+            return_value={"device_name": "test-host", "os_info": "Test OS"},
+        ):
+            passed, _ = engine._test_crypto_signature(None)
+
+        self.assertTrue(passed)
+        request_body = engine.communicator._http_post.call_args.args[1]
+        self.assertEqual(
+            set(request_body),
+            {
+                "license_key",
+                "hwid",
+                "device_name",
+                "os_info",
+                "app_name",
+                "app_version",
+                "client_time",
+            },
+        )
 
     def test_diagnostic_client_uses_short_heartbeat_and_revocation_callback(self):
         callback = Mock()

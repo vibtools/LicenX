@@ -49,8 +49,8 @@ class LoginManager:
                 code="EMPTY_KEY",
             )
 
-        telemetry = DeviceManager.get_device_telemetry()
-        hwid = telemetry["hwid"]
+        telemetry = DeviceManager.get_validation_telemetry()
+        hwid = DeviceManager.get_hwid()
         normalized_key = license_key.strip().upper()
 
         # Call Server Validation Endpoint

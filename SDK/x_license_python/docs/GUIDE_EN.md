@@ -44,9 +44,9 @@ The VCON Python SDK provides client-side protection by communicating with your c
    |                 |                   |                   |
    v                 v                   v                   v
 [device.py]     [login.py]          [storage.py]        [logout.py]
-- Motherboard   - Validate Online   - Session Cache     - Exit Hooks
-- Disk Serial   - Check Limits      - 20-Min Daemon     - Slot Release
-- SHA-256 HWID  - Anti-Rollback     - Auto-Restore      - atexit/signal
+- Motherboard   - Validate Online   - No Key Persistence - Exit Hooks
+- Disk Serial   - Check Limits      - 20-Min Daemon      - Slot Release
+- SHA-256 HWID  - Anti-Rollback     - Legacy Cleanup     - atexit/signal
    |                 |                   |                   |
    +-----------------+-------------------+-------------------+
                                 |
@@ -83,19 +83,15 @@ The VCON Python SDK provides client-side protection by communicating with your c
 - **Python Version:** 3.8, 3.9, 3.10, 3.11, or 3.12+
 - **Operating Systems:** Windows 10/11, macOS (Intel & Apple Silicon), Linux (Ubuntu, Debian, CentOS, Arch, etc.)
 
-### Standard Library Ready (Zero Mandatory Dependencies)
+### Dependencies
 
-The SDK is uniquely engineered to operate using **Python's standard library** (`urllib.request`, `hashlib`, `socket`, `platform`, `subprocess`, `json`, `time`, `threading`).
-
-### Optional Production Packages (Recommended)
-
-For enhanced HTTP performance and local Ed25519 cryptographic signature checks:
+The `cryptography` package is required for all RSA and Ed25519 license signature verification. Without it, the SDK rejects signed license responses. `requests` is optional; the HTTP client falls back to Python's standard-library `urllib` transport when it is unavailable.
 
 ```bash
-pip install requests>=2.28.0 cryptography>=41.0.0
+pip install -r requirements.txt
 ```
 
-_(If these packages are not installed, the SDK seamlessly falls back to native standard-library `urllib` and logs an informative note)._
+Do not run the SDK without `cryptography`; it does not use a handwritten RSA verification fallback.
 
 ---
 
@@ -148,9 +144,11 @@ client = XLicenseClient(
     public_key_pem=TRUSTED_SERVER_PUBLIC_KEY_PEM,
     ping_interval_seconds=1200,   # 20 minutes
     auto_logout_on_exit=True,     # Free device slot on app close
-    auto_save_session=True,       # Save key for seamless restart
+    auto_save_session=True,       # Retained for compatibility; persistence is currently disabled
 )
 ```
+
+**Saved-session behavior:** Persistent license-key storage is currently disabled because the SDK does not yet use a secure OS credential store. `auto_login()` therefore returns `NO_SAVED_SESSION`, and the application must prompt for the key after each restart. The `auto_save_session` option remains accepted for compatibility but does not write the key. Any legacy `.vcon_session_<app>.dat` file is rejected and removed when accessed.
 
 ---
 
@@ -178,7 +176,7 @@ else:
 
 ### Automatic Session Login (Auto-Login)
 
-On subsequent launches, your application should attempt `client.auto_login()` before prompting the user. `auto_login()` reads the cached key from the secure OS temp storage and validates it live with the server:
+On subsequent launches, `client.auto_login()` can be called before prompting the user, but persistent key storage is currently disabled. It returns `NO_SAVED_SESSION`; prompt the user for the key and validate it online:
 
 ```python
 from x_license_python import XLicenseClient
@@ -200,11 +198,13 @@ else:
 
 When a user exits your app (via GUI close, `sys.exit()`, or `Ctrl+C`):
 
-- `logout.py` intercepts process termination hooks (`atexit`, `signal.SIGINT`, `signal.SIGTERM`).
+- `logout.py` registers `atexit`, `SIGINT`, and `SIGTERM` cleanup hooks. For signals, it runs cleanup once and then calls the handler that was already registered by the host application. Default and ignored signal behavior are preserved.
 - It sends a lightweight notification to `/v1/license/logout`.
 - The server updates the device row to `status = 'logged_out'`.
 - **Result:** The user's active device slot is instantly freed. They can immediately open the app on another PC without triggering `DEVICE_LIMIT_REACHED`!
-- The saved session file is preserved locally, so when they reopen the app on the first PC, `auto_login()` reactivates the device.
+- License keys are not persisted locally; reopening the app requires the user to enter the key and authenticate online again.
+
+Set `auto_logout_on_exit=False` when the host application manages its own shutdown and signal behavior; the SDK will not register automatic exit or signal hooks.
 
 To perform a manual logout (e.g., when a user clicks "Sign Out" or "Unlink License"):
 
@@ -241,6 +241,8 @@ print("System OS  :", telemetry["os_info"])
 print("CPU Model  :", telemetry["cpu_info"])
 print("Local IP   :", telemetry["local_ip"])
 ```
+
+Login transmits the HWID needed for device binding and only the `device_name` and `os_info` metadata. Other detailed telemetry remains local. `DeviceManager.get_device_telemetry()` does not look up public IP by default; pass `include_public_ip=True` only when that data is explicitly needed. `DeviceManager.get_full_telemetry()` is the legacy full-data opt-in. Both opt-ins contact `api.ipify.org`. Generated diagnostic reports redact HWID, hostname, MAC/IP, and other machine-specific identifiers.
 
 ---
 
@@ -455,13 +457,13 @@ if __name__ == "__main__":
 | ---------------------- | --------------------------------------------------------------------------------------------- | ---------------- | -------------------------------------------------------------------------- |
 | `__init__`             | `config_path=None, config=None, app_name=None, server_url=None, on_license_revoked=None, ...` | `None`           | Instantiates client. Auto-discovers config file if none provided.          |
 | `login`                | `license_key: str`                                                                            | `LoginResult`    | Validates key online, locks device slot, starts 20-min heartbeat daemon.   |
-| `auto_login`           | None                                                                                          | `LoginResult`    | Loads saved session from OS temp storage and re-authenticates online.      |
+| `auto_login`           | None                                                                                          | `LoginResult`    | Returns `NO_SAVED_SESSION` while key persistence is disabled.              |
 | `logout`               | `clear_saved_license: bool = True`                                                            | `bool`           | Unbinds HWID from server, frees device slot, optionally clears cached key. |
 | `ping`                 | None                                                                                          | `Dict[str, Any]` | Executes on-demand server heartbeat ping.                                  |
 | `is_authenticated`     | None                                                                                          | `bool`           | Returns `True` if active valid session is present.                         |
 | `get_tier`             | None                                                                                          | `str`            | Returns license tier name (e.g. `Standard`, `Pro`, `Enterprise`).          |
 | `get_hwid`             | None                                                                                          | `str`            | Returns deterministic hardware identifier string.                          |
-| `get_device_telemetry` | None                                                                                          | `Dict[str, Any]` | Returns comprehensive hardware, OS, network, and timezone dict.            |
+| `get_device_telemetry` | None                                                                                          | `Dict[str, Any]` | Returns local hardware/OS/network/timezone data without public IP lookup.  |
 | `get_license_info`     | None                                                                                          | `Optional[Dict]` | Returns full verified JSON payload from license server.                    |
 
 ### `LoginResult` Dataclass

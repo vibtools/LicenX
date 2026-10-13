@@ -11,17 +11,17 @@ Production-grade, modular client protection and hardware locking SDK for Python 
 
 ## 📦 Architecture & Module Responsibilities
 
-| Module               | Scope & Responsibility                                                                                                                                                                                      |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`config.py`**      | Auto-discovers and parses `<app_name>_vcon_config.json` or `vcon_config.json`. Normalizes server URLs and provides standard configurations.                                                                 |
-| **`device.py`**      | Collects hardware telemetry (Motherboard UUID, Primary Disk Serial, CPU model, MAC address, LAN/WAN IP, Timezone) and computes deterministic SHA-256 `HWID-XXXX-XXXX-XXXX-XXXX`.                            |
-| **`server.py`**      | Transport and protocol engine. Supports `requests` with native `urllib` standard-library fallback. Verifies server RSA 2048-bit and Ed25519 signatures, pings heartbeat, and delivers unbind notifications. |
-| **`login.py`**       | Handles strict online validation and saved session auto-login. Validates SSL, RSA 2048-bit signature, app scope, device limit, and active status. Disallows offline logins.                                 |
-| **`logout.py`**      | Manages manual logout and process exit hooks (`atexit`, `SIGINT`, `SIGTERM`). Instantly notifies the server to mark device as `logged_out` and release the hardware slot.                                   |
-| **`storage.py`**     | Secure session storage in the OS temp directory (`.vcon_session_<app>.dat`) and runs a low-overhead background daemon thread every 20 minutes to verify server state.                                       |
-| **`offline.py`**     | Enforces online-only security policies and detects system clock manipulation / rollback attacks.                                                                                                            |
-| **`client.py`**      | High-level facade (`XLicenseClient`) exposing clean, intuitive methods for desktop and CLI Python applications.                                                                                             |
-| **`example_app.py`** | Complete lifecycle demonstration application ready to test and run.                                                                                                                                         |
+| Module               | Scope & Responsibility                                                                                                                                                                                                     |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`config.py`**      | Auto-discovers and parses `<app_name>_vcon_config.json` or `vcon_config.json`. Normalizes server URLs and provides standard configurations.                                                                                |
+| **`device.py`**      | Computes deterministic SHA-256 HWID and offers local hardware telemetry; public-IP lookup is explicit opt-in. Login sends only HWID, device name, and OS metadata.                                                         |
+| **`server.py`**      | Transport and protocol engine. Supports `requests` with native `urllib` standard-library fallback. Requires `cryptography` for RSA and Ed25519 signature verification, pings heartbeat, and delivers unbind notifications. |
+| **`login.py`**       | Handles strict online validation and attempts saved-session auto-login. Persistent key storage is currently disabled. Validates SSL, signatures, app scope, device limit, and active status. Disallows offline logins.     |
+| **`logout.py`**      | Manages manual logout and process exit hooks (`atexit`, `SIGINT`, `SIGTERM`) while preserving existing host signal handlers. Instantly notifies the server to mark device as `logged_out` and release the hardware slot.   |
+| **`storage.py`**     | Disables persistent license-key storage and rejects legacy temp-file sessions; runs a low-overhead background daemon thread every 20 minutes to verify server state.                                                       |
+| **`offline.py`**     | Enforces online-only security policies and detects system clock manipulation / rollback attacks.                                                                                                                           |
+| **`client.py`**      | High-level facade (`XLicenseClient`) exposing clean, intuitive methods for desktop and CLI Python applications.                                                                                                            |
+| **`example_app.py`** | Complete lifecycle demonstration application ready to test and run.                                                                                                                                                        |
 
 ---
 
@@ -29,15 +29,14 @@ Production-grade, modular client protection and hardware locking SDK for Python 
 
 ### 1. Requirements
 
-The SDK runs out of the box on standard **Python 3.8+**.
-For Ed25519 signature verification and the preferred HTTP transport on the client machine:
+The SDK supports **Python 3.8+**. Install its requirements before use; `cryptography` is required for all license signature verification. HTTP transport can use optional `requests` or the standard-library `urllib` fallback.
 
 ```bash
 pip install -r requirements.txt
 # Installs: requests>=2.28.0, cryptography>=41.0.0
 ```
 
-_(Without `cryptography`, the SDK can verify supported RSA signatures through its standard-library fallback, but it rejects Ed25519 signatures it cannot verify. It never accepts an unverifiable signature.)_
+_(If `cryptography` is unavailable, the SDK rejects all signed license responses. It does not use a handwritten RSA fallback.)_
 
 ### 2. Configuration Setup
 
@@ -69,11 +68,11 @@ def on_revoked(reason: str):
 # Initialize client (automatically auto-discovers config in current or script folder)
 client = XLicenseClient(on_license_revoked=on_revoked)
 
-# 1. Attempt Auto-Login with saved session from OS temp directory
+# 1. Attempt Auto-Login (the SDK does not persist license keys)
 res = client.auto_login()
 
 if not res.success:
-    # 2. Prompt user for license key if no valid session is found
+    # 2. Prompt the user for a key; persistence requires a secure OS credential store
     key = input("Enter License Key: ").strip()
     res = client.login(key)
 
@@ -101,11 +100,16 @@ else:
    - Licenses scoped to specific applications cannot authenticate other apps on the same server.
    - Global licenses (`app_id IS NULL`) can authenticate any app while respecting version constraints.
 
-3. **Dynamic Hardware Slot Releasing (Logout)**:
-   - When an application closes or calls `client.logout(clear_saved_license=False)`, the server marks the device as `logged_out`.
-   - The device slot is immediately freed, allowing the same license to be activated on another PC.
-   - When the first PC re-opens, `auto_login()` checks server limits and re-activates the slot if available.
+3. **Telemetry Minimization**:
+   - License validation sends the required HWID plus device name and OS metadata; the detailed local telemetry mapping is not sent.
+   - Diagnostic reports redact machine-specific identifiers. Public-IP lookup is available only through an explicit `DeviceManager.get_device_telemetry(include_public_ip=True)` or `DeviceManager.get_full_telemetry()` call, which contacts `api.ipify.org`.
 
-4. **Background Heartbeat Worker (20-Minute Cycle)**:
+4. **Dynamic Hardware Slot Releasing (Logout)**:
+   - When an application closes or calls `client.logout(clear_saved_license=False)`, the server marks the device as `logged_out`.
+   - Automatic exit hooks chain existing `SIGINT`/`SIGTERM` handlers after cleanup and run cleanup only once. Setting `auto_logout_on_exit=False` leaves host signal handling unchanged.
+   - The device slot is immediately freed, allowing the same license to be activated on another PC.
+   - Since license keys are not persisted, reopening the app requires the user to enter the key and authenticate online again.
+
+5. **Background Heartbeat Worker (20-Minute Cycle)**:
    - Runs as a low-priority daemon thread with minimal CPU/RAM footprint.
    - If an admin revokes, suspends, or unbinds a device from the control panel, the client detects the termination on the next heartbeat, triggers `on_license_revoked`, and terminates premium features.

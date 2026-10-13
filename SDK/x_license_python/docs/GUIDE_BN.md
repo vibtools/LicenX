@@ -44,9 +44,9 @@ VCON লাইসেন্সিং সিস্টেম ক্লায়ে�
    |                 |                   |                   |
    v                 v                   v                   v
 [device.py]     [login.py]          [storage.py]        [logout.py]
-- মাদারবোর্ড    - অনলাইন ভেরিফাই   - টেম্প ক্যাশ সেশন   - এক্সিট হুক
+- মাদারবোর্ড    - অনলাইন ভেরিফাই   - key persist নয়    - এক্সিট হুক
 - ডিস্ক সিরিয়াল  - লিমিট চেক        - ২০-মিনিট ডেমন     - স্লট রিলিজ
-- SHA-256 HWID  - ঘড়ি সুরক্ষা       - অটো-রিস্টোর        - atexit/signal
+- SHA-256 HWID  - ঘড়ি সুরক্ষা       - legacy cleanup    - atexit/signal
    |                 |                   |                   |
    +-----------------+-------------------+-------------------+
                                 |
@@ -83,17 +83,15 @@ VCON লাইসেন্সিং সিস্টেম ক্লায়ে�
 - **পাইথন ভার্সন:** ৩.৮ বা তার পরবর্তী (Python 3.8, 3.9, 3.10, 3.11, 3.12+)
 - **অপারেটিং সিস্টেম:** Windows 10/11, macOS, Linux (যেকোনো ডিস্ট্রো)
 
-### স্ট্যান্ডার্ড লাইব্রেরি রেডি (জিরো বাধ্যতামূলক ডিপেন্ডেন্সি)
+### Dependency
 
-SDK-টি তৈরি করা হয়েছে পাইথনের বিল্ট-ইন স্ট্যান্ডার্ড লাইব্রেরি দিয়ে (`urllib.request`, `hashlib`, `socket`, `platform`, `subprocess`, `json`, `time`, `threading`)। কোনো থার্ড পার্টি প্যাকেজ ছাড়াই এটি কাজ করে।
-
-### অপশনাল প্রোডাকশন প্যাকেজ (উন্নত পারফরম্যান্স ও লোকাল সিগনেচার ভ্যালিডেশনের জন্য):
+RSA ও Ed25519 license signature যাচাইয়ের জন্য `cryptography` package বাধ্যতামূলক। এটি না থাকলে SDK signed license response reject করে। `requests` optional; এটি না থাকলে HTTP transport Python standard library-এর `urllib` ব্যবহার করে।
 
 ```bash
-pip install requests>=2.28.0 cryptography>=41.0.0
+pip install -r requirements.txt
 ```
 
-_(এই প্যাকেজগুলো ইনস্টল না থাকলেও কোনো এরর হবে না; SDK স্বয়ংক্রিয়ভাবে নেটিভ `urllib` দিয়ে কাজ চালিয়ে নেবে)।_
+`cryptography` ছাড়া SDK চালাবেন না; এতে handwritten RSA verification fallback নেই।
 
 ---
 
@@ -140,9 +138,11 @@ client = XLicenseClient(
     public_key_pem=TRUSTED_SERVER_PUBLIC_KEY_PEM,
     ping_interval_seconds=1200,   # ২০ মিনিট পরপর সার্ভার চেক
     auto_logout_on_exit=True,     # অ্যাপ বন্ধ হলে হার্ডওয়্যার স্লট ফ্রি হবে
-    auto_save_session=True,       # পরবর্তী স্টার্টের জন্য কি সেভ রাখবে
+    auto_save_session=True,       # compatibility-র জন্য আছে; বর্তমানে key persist হয় না
 )
 ```
+
+**সেভ করা সেশনের আচরণ:** SDK-তে secure OS credential store যুক্ত না হওয়া পর্যন্ত license key disk-এ persist করা বন্ধ। তাই `auto_login()` `NO_SAVED_SESSION` দেয় এবং প্রতিবার restart-এর পর ব্যবহারকারীকে key দিতে হবে। Compatibility-র জন্য `auto_save_session` option রাখা হয়েছে, কিন্তু এটি key write করে না। পুরনো `.vcon_session_<app>.dat` ফাইল access হলে reject করে সরানো হয়।
 
 ---
 
@@ -169,7 +169,7 @@ else:
 
 ### স্বয়ংক্রিয় সেশন লগইন (Auto-Login)
 
-পরবর্তী সময়ে অ্যাপ চালু করার সময় ব্যবহারকারীকে বারবার কি জিজ্ঞাসা না করে `auto_login()` চালান। এটি ওএস টেম্প ডিরেক্টরি থেকে কি পড়ে এবং লাইভ সার্ভারে ভেরিফাই করে:
+পরবর্তী সময়ে অ্যাপ চালু হলে `auto_login()` চালানো যায়, তবে বর্তমানে key persist হয় না। এটি `NO_SAVED_SESSION` দেয়; ব্যবহারকারীর কাছ থেকে key নিয়ে অনলাইনে যাচাই করুন:
 
 ```python
 from x_license_python import XLicenseClient
@@ -191,10 +191,12 @@ else:
 
 ইউজার যখন অ্যাপ কেটে দেয় (উইন্ডো ক্লোজ, `sys.exit()` বা `Ctrl+C`):
 
-- SDK-এর `logout.py` প্রসেস বন্ধ হওয়ার সিগন্যাল (`atexit`, `SIGINT`, `SIGTERM`) ক্যাচ করে।
+- SDK-এর `logout.py` `atexit`, `SIGINT` ও `SIGTERM` cleanup hook নিবন্ধন করে। সিগন্যাল এলে cleanup একবার চালিয়ে আগে থেকে host app-এ নিবন্ধিত handler-কে একই signal ও frame দেয়। Default ও ignored signal-এর আচরণও অক্ষুণ্ণ থাকে।
 - সার্ভারে তাৎক্ষণিক নোটিফিকেশন পাঠায় এবং ডিভাইসটি `logged_out` মার্ক করে।
 - **সুবিধা:** ডিভাইসের স্লট তৎক্ষণাৎ মুক্ত হয়ে যায়। ব্যবহারকারী সাথে সাথে অন্য কম্পিউটারে তার লাইসেন্স ব্যবহার করতে পারে।
-- লোকাল মেশিনে কি সংরক্ষিত থাকে, তাই প্রথম পিসিতে পুনরায় অ্যাপ ওপেন করলে `auto_login()` স্বয়ংক্রিয়ভাবে স্লট পুনরায় অ্যাক্টিভ করে।
+- License key লোকাল মেশিনে persist হয় না; অ্যাপ পুনরায় চালু করলে key দিয়ে আবার online authentication করতে হবে।
+
+Host app নিজে shutdown ও signal পরিচালনা করলে `auto_logout_on_exit=False` দিন; তখন SDK কোনো automatic exit বা signal hook নিবন্ধন করবে না।
 
 সম্পূর্ণ লগআউট (Sign Out বা Unlink License):
 
@@ -225,8 +227,10 @@ telemetry = DeviceManager.get_device_telemetry()
 
 print("Hardware ID:", hwid)
 print("অপারেটিং সিস্টেম:", telemetry["os_info"])
-print("পাবলিক আইপি:", telemetry["public_ip"])
+print("Local IP:", telemetry["local_ip"])
 ```
+
+Login-এ device binding-এর জন্য প্রয়োজনীয় HWID এবং শুধু `device_name`, `os_info` metadata পাঠানো হয়; বিস্তারিত local telemetry পাঠানো হয় না। `DeviceManager.get_device_telemetry()` default-এ public IP খোঁজে না। স্পষ্টভাবে প্রয়োজন হলে `include_public_ip=True` দিন, অথবা legacy full-data opt-in `DeviceManager.get_full_telemetry()` ব্যবহার করুন; দুটোতেই `api.ipify.org`-এ request যায়। Generated diagnostic report-এ HWID, hostname, MAC/IP এবং অন্য machine-specific identifier redact করা হয়।
 
 ---
 
@@ -430,13 +434,13 @@ if __name__ == "__main__":
 | মেথড                   | প্যারামিটারসমূহ                    | রিটার্ন টাইপ     | বিবরণ                                                                  |
 | ---------------------- | ---------------------------------- | ---------------- | ---------------------------------------------------------------------- |
 | `login`                | `license_key: str`                 | `LoginResult`    | অনলাইনে লাইসেন্স যাচাই করে এবং ২০-মিনিট হার্টবিট শুরু করে।             |
-| `auto_login`           | কোনো প্যারামিটার নেই               | `LoginResult`    | ওএস টেম্প ডিরেক্টরি থেকে কি পড়ে লাইভ সার্ভারে ভেরিফাই করে।             |
+| `auto_login`           | কোনো প্যারামিটার নেই               | `LoginResult`    | key persistence বন্ধ থাকায় `NO_SAVED_SESSION` দেয়।                     |
 | `logout`               | `clear_saved_license: bool = True` | `bool`           | ডিভাইস স্লট মুক্ত করে এবং লোকাল কি মুছে দেয়।                           |
 | `ping`                 | কোনো প্যারামিটার নেই               | `Dict[str, Any]` | তাৎক্ষণিক অন-ডিমান্ড পিং চেক করে স্ট্যাটাস ডিকশনারি ফেরত দেয়।          |
 | `is_authenticated`     | কোনো প্যারামিটার নেই               | `bool`           | ক্লায়েন্ট বর্তমানে সক্রিয়ভাবে অনুমোদিত কি না জানায়।                  |
 | `get_tier`             | কোনো প্যারামিটার নেই               | `str`            | লাইসেন্স টায়ার নাম প্রদান করে (যেমন: `Standard`, `Pro`, `Enterprise`)। |
 | `get_hwid`             | কোনো প্যারামিটার নেই               | `str`            | কম্পিউটারের ইউনিক HWID স্ট্রিং প্রদান করে।                             |
-| `get_device_telemetry` | কোনো প্যারামিটার নেই               | `Dict[str, Any]` | ওএস, সিপিইউ, আইপি ও টাইমজোনের পূর্ণ তথ্য প্রদান করে।                   |
+| `get_device_telemetry` | কোনো প্যারামিটার নেই               | `Dict[str, Any]` | public IP lookup ছাড়া local hardware/OS/network/timezone তথ্য দেয়।     |
 | `get_license_info`     | কোনো প্যারামিটার নেই               | `Optional[Dict]` | সার্ভারের সম্পূর্ণ ভেরিফাইড JSON পেলোড প্রদান করে।                     |
 
 ---

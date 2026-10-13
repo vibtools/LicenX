@@ -74,7 +74,7 @@ test("Cloudflare request fails clearly when remote database bindings are missing
   const body = (await response.json()) as { error?: string };
 
   assert.equal(response.status, 500);
-  assert.match(body.error || "", /Remote database configuration is required/);
+  assert.deepEqual(body, { error: "Internal server error" });
 });
 
 test("accepts remote configuration for Node production and Cloudflare", () => {

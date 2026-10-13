@@ -6,6 +6,7 @@ so the license can be activated on another PC immediately.
 """
 
 import atexit
+import os
 import signal
 from typing import Optional
 from .device import DeviceManager
@@ -25,6 +26,7 @@ class LogoutManager:
         self.auto_logout_on_exit = auto_logout_on_exit
         self._current_license_key: Optional[str] = None
         self._exit_hook_registered = False
+        self._exit_cleanup_started = False
 
         if self.auto_logout_on_exit:
             self._register_exit_hooks()
@@ -60,7 +62,8 @@ class LogoutManager:
             return
 
         def _on_exit():
-            if self._current_license_key:
+            if self._current_license_key and not self._exit_cleanup_started:
+                self._exit_cleanup_started = True
                 try:
                     self.logout(self._current_license_key, clear_saved_data=False)
                 except Exception:
@@ -68,14 +71,26 @@ class LogoutManager:
 
         atexit.register(_on_exit)
 
-        # Handle SIGTERM / SIGINT gracefully
+        previous_handlers = {}
+
         def _sig_handler(signum, frame):
+            previous_handler = previous_handlers.get(signum, signal.SIG_DFL)
+
+            if previous_handler == signal.SIG_IGN:
+                return
+
             _on_exit()
-            raise SystemExit(0)
+
+            if callable(previous_handler):
+                previous_handler(signum, frame)
+            elif previous_handler == signal.SIG_DFL:
+                signal.signal(signum, signal.SIG_DFL)
+                os.kill(os.getpid(), signum)
 
         try:
-            signal.signal(signal.SIGINT, _sig_handler)
-            signal.signal(signal.SIGTERM, _sig_handler)
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                previous_handlers[signum] = signal.getsignal(signum)
+                signal.signal(signum, _sig_handler)
         except Exception:
             # In some thread or non-main thread contexts, signal registration might not be allowed
             pass

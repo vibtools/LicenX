@@ -166,13 +166,16 @@ class DeviceManager:
         return cls._cached_hwid
 
     @classmethod
-    def get_device_telemetry(cls) -> Dict[str, Any]:
+    def get_device_telemetry(cls, include_public_ip: bool = False) -> Dict[str, Any]:
         """
-        Builds full JSON device details payload for server-side monitoring
-        including hardware, OS, network, and location/timezone.
+        Collects local hardware, OS, network, and timezone details.
+        Public IP lookup is opt-in because it contacts a third-party service.
         """
         if cls._cached_telemetry:
-            return cls._cached_telemetry
+            telemetry = dict(cls._cached_telemetry)
+            if include_public_ip:
+                telemetry["public_ip"] = cls.get_public_ip()
+            return telemetry
 
         hwid = cls.get_hwid()
         device_name = platform.node() or socket.gethostname() or "Unknown-PC"
@@ -193,13 +196,22 @@ class DeviceManager:
             "disk_serial": cls.get_disk_serial(),
             "cpu_info": cls.get_cpu_info(),
             "local_ip": cls.get_local_ip(),
-            "public_ip": cls.get_public_ip(),
             "timezone": tz,
             "system_locale": f"{tz} ({time.strftime('%z')})",
         }
-        return cls._cached_telemetry
+        telemetry = dict(cls._cached_telemetry)
+        if include_public_ip:
+            telemetry["public_ip"] = cls.get_public_ip()
+        return telemetry
+
+    @classmethod
+    def get_validation_telemetry(cls) -> Dict[str, str]:
+        """Returns only the non-unique device metadata required for validation."""
+        device_name = platform.node() or socket.gethostname() or "Unknown-PC"
+        os_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
+        return {"device_name": device_name, "os_info": os_info}
 
     @classmethod
     def get_full_telemetry(cls) -> Dict[str, Any]:
-        """Alias for get_device_telemetry"""
-        return cls.get_device_telemetry()
+        """Returns full local telemetry and explicitly looks up public IP."""
+        return cls.get_device_telemetry(include_public_ip=True)

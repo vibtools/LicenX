@@ -8,7 +8,6 @@ import time
 import json
 import base64
 import socket
-import hashlib
 from typing import Dict, Any, Tuple, Optional
 from .config import SDKConfig
 
@@ -22,7 +21,7 @@ except ImportError:
     import urllib.error
     import ssl
 
-# Graceful Cryptography import (strict Ed25519 verification when available)
+# Signature verification fails closed when the required cryptography package is unavailable.
 try:
     from cryptography.hazmat.primitives.serialization import load_pem_public_key  # type: ignore
     HAS_CRYPTOGRAPHY = True
@@ -47,38 +46,6 @@ class ServerCommunicator:
         """Produces canonical sorted JSON string matching server-side signing format"""
         return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
-    @staticmethod
-    def _verify_rsa_standard_library(data_str: str, signature_b64: str, pem_str: str) -> bool:
-        """
-        Pure Python standard-library RSA PKCS#1 v1.5 SHA-256 verification using built-in pow(sig, e, n).
-        Allows 100% cryptographic verification without third-party pip dependencies.
-        """
-        try:
-            sig_bytes = base64.b64decode(signature_b64)
-            raw_b64 = "".join([l for l in pem_str.strip().splitlines() if not l.startswith("-----")])
-            der = base64.b64decode(raw_b64)
-            idx = der.find(b"\x02\x82")
-            if idx == -1:
-                return False
-            mod_len = (der[idx + 2] << 8) | der[idx + 3]
-            mod_bytes = der[idx + 4 : idx + 4 + mod_len].lstrip(b"\x00")
-            n = int.from_bytes(mod_bytes, "big")
-            e_idx = idx + 4 + mod_len
-            e_len = der[e_idx + 1]
-            e = int.from_bytes(der[e_idx + 2 : e_idx + 2 + e_len], "big")
-            k = len(mod_bytes)
-
-            sig_int = int.from_bytes(sig_bytes, "big")
-            dec_int = pow(sig_int, e, n)
-            dec_bytes = dec_int.to_bytes(k, "big")
-
-            sha256_prefix = b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x04\x20"
-            expected_hash = hashlib.sha256(data_str.encode("utf-8")).digest()
-            expected_suffix = sha256_prefix + expected_hash
-            return dec_bytes.endswith(expected_suffix) and dec_bytes.startswith(b"\x00\x01")
-        except Exception:
-            return False
-
     def verify_signature(self, payload: Dict[str, Any], signature_b64: str) -> bool:
         """
         Cryptographically verifies the RSA (2048/4096-bit) or Ed25519 signature
@@ -86,6 +53,8 @@ class ServerCommunicator:
         Guarantees response authenticity and prevents MITM or fake server bypass.
         """
         if not self.config.public_key_pem or not signature_b64:
+            return False
+        if not HAS_CRYPTOGRAPHY:
             return False
 
         try:
@@ -96,27 +65,21 @@ class ServerCommunicator:
             canonical_str = self.canonical_json(payload)
             signature_bytes = base64.b64decode(signature_b64)
 
-            if HAS_CRYPTOGRAPHY:
-                pub_key = load_pem_public_key(pem_str.encode("utf-8"))
-                if hasattr(pub_key, "key_size"):
-                    # RSA 2048/4096 bit key with SHA-256
-                    from cryptography.hazmat.primitives.asymmetric import padding
-                    from cryptography.hazmat.primitives import hashes
-                    pub_key.verify(
-                        signature_bytes,
-                        canonical_str.encode("utf-8"),
-                        padding.PKCS1v15(),
-                        hashes.SHA256(),
-                    )
-                else:
-                    # Ed25519 key
-                    pub_key.verify(signature_bytes, canonical_str.encode("utf-8"))
-                return True
+            pub_key = load_pem_public_key(pem_str.encode("utf-8"))
+            if hasattr(pub_key, "key_size"):
+                # RSA 2048/4096 bit key with SHA-256
+                from cryptography.hazmat.primitives.asymmetric import padding
+                from cryptography.hazmat.primitives import hashes
+                pub_key.verify(
+                    signature_bytes,
+                    canonical_str.encode("utf-8"),
+                    padding.PKCS1v15(),
+                    hashes.SHA256(),
+                )
             else:
-                # Check if RSA key (contains RSA or length > 100 bytes)
-                if "RSA" in pem_str or len(pem_str) > 200:
-                    return self._verify_rsa_standard_library(canonical_str, signature_b64, pem_str)
-                return False
+                # Ed25519 key
+                pub_key.verify(signature_bytes, canonical_str.encode("utf-8"))
+            return True
         except Exception as e:
             print(f"[VCON-SDK] Cryptographic signature verification failed: {e}")
             return False
@@ -269,7 +232,6 @@ class ServerCommunicator:
             "app_name": self.config.app_name,
             "app_version": self.config.min_version,
             "client_time": int(time.time() * 1000),
-            "telemetry": telemetry,
         }
 
         status_code, data = self._http_post(url, body, self.config.request_timeout_seconds)

@@ -6,9 +6,9 @@ import path from "node:path";
 import {
   canonicalJson,
   createSessionToken,
+  generateAdminApiKey,
   generateLicenseKey,
   generateLicensePin,
-  generateAdminApiKey,
   generateRSAKeyPair,
   hashAdminApiSecret,
   hashPassword,
@@ -19,7 +19,7 @@ import {
 import { getDbClient, isTursoPlaceholder } from "./db.js";
 import { bindDeviceWithinLimit } from "./deviceBinding.js";
 import { isPublicAccessEnabled } from "./publicAccessSettings.js";
-import { R2Config, testR2Connection, uploadToR2, getR2Object } from "./r2.js";
+import { getR2Object, R2Config, testR2Connection, uploadToR2 } from "./r2.js";
 import {
   clearUserControlPinAttempts,
   getUserControlPinRateLimit,
@@ -341,9 +341,7 @@ apiRouter.post(
         username: targetUsername,
       });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -655,9 +653,7 @@ apiRouter.get(
       );
       res.send(JSON.stringify(clientConfig, null, 2));
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -760,9 +756,7 @@ apiRouter.get(
         offset: Number(offset),
       });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -838,9 +832,7 @@ apiRouter.post(
         },
       });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -981,9 +973,7 @@ apiRouter.post(
         r2Backup: r2UploadResult,
       });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1061,9 +1051,7 @@ apiRouter.patch(
 
       res.json({ success: true });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1088,9 +1076,7 @@ apiRouter.delete(
 
       res.json({ success: true });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1174,9 +1160,7 @@ apiRouter.get(
 
       res.json({ devices: result.rows });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1195,9 +1179,7 @@ apiRouter.delete(
       });
       res.json({ success: true });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1258,9 +1240,7 @@ apiRouter.get(
         total: Number(countResult.rows[0].total || 0),
       });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1275,9 +1255,7 @@ apiRouter.delete(
       await db.execute({ sql: "DELETE FROM devices WHERE id = ?", args: [id] });
       res.json({ success: true });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1336,9 +1314,7 @@ apiRouter.post(
         active_device_count: Number(row.active_device_count || 0),
       });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1463,9 +1439,7 @@ apiRouter.post("/v1/user/control/open", async (req: Request, res: Response) => {
       devices: devicesResult.rows,
     });
   } catch (error: any) {
-    res
-      .status(500)
-      .json({ error: SAFE_SERVER_ERROR });
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -1576,9 +1550,7 @@ apiRouter.post(
           "All devices logged out and reset successfully. You can now login on another device.",
       });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -1609,9 +1581,7 @@ apiRouter.get("/v1/public-key", async (req: Request, res: Response) => {
       serverTime: Date.now(),
     });
   } catch (error: any) {
-    res
-      .status(500)
-      .json({ error: SAFE_SERVER_ERROR });
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -2307,9 +2277,7 @@ apiRouter.get(
           : "file:vcon_data.db",
       });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2337,7 +2305,10 @@ apiRouter.post(
             const parsed = JSON.parse(
               existing.rows[0].r2_config_json as string,
             );
-            if (parsed.secretAccessKey && !parsed.secretAccessKey.includes("•")) {
+            if (
+              parsed.secretAccessKey &&
+              !parsed.secretAccessKey.includes("•")
+            ) {
               finalSecretKey = parsed.secretAccessKey.trim();
             }
           } catch {
@@ -2369,9 +2340,7 @@ apiRouter.post(
 
       res.json({ success: true, message: "R2 configuration saved" });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2398,7 +2367,10 @@ apiRouter.post(
             const parsed = JSON.parse(
               existing.rows[0].r2_config_json as string,
             );
-            if (parsed.secretAccessKey && !parsed.secretAccessKey.includes("•")) {
+            if (
+              parsed.secretAccessKey &&
+              !parsed.secretAccessKey.includes("•")
+            ) {
               finalSecretKey = parsed.secretAccessKey.trim();
             }
           } catch {
@@ -2417,9 +2389,7 @@ apiRouter.post(
       const testResult = await testR2Connection(config);
       res.json(testResult);
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ success: false, message: SAFE_SERVER_ERROR });
+      res.status(500).json({ success: false, message: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2512,9 +2482,7 @@ apiRouter.get("/public/site-settings", async (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.json(siteSettings);
   } catch (error: any) {
-    res
-      .status(500)
-      .json({ error: SAFE_SERVER_ERROR });
+    res.status(500).json({ error: SAFE_SERVER_ERROR });
   }
 });
 
@@ -2554,9 +2522,7 @@ apiRouter.get(
 
       res.json({ siteSettings, r2Configured });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2595,9 +2561,7 @@ apiRouter.post(
 
       res.json({ success: true, siteSettings: updatedSettings });
     } catch (error: any) {
-      res
-        .status(500)
-        .json({ error: SAFE_SERVER_ERROR });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
   },
 );
@@ -2738,23 +2702,31 @@ apiRouter.get(
   },
 );
 
-
-
 // -------------------------------------------------------------
 // EXTERNAL STORE REST API ENDPOINTS (/api/v1/admin/*)
 // -------------------------------------------------------------
 
 // Middleware: Authenticate Admin API Key with granular scope verification
 // In-memory sliding rate limit tracker for external Admin APIs (120 req/min per key/IP)
-const adminApiRateLimits = new Map<string, { count: number; windowStart: number }>();
+const adminApiRateLimits = new Map<
+  string,
+  { count: number; windowStart: number }
+>();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 120;
 
 export function requireAdminApiKey(requiredScope?: string) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
     try {
       // 1. IP / Key Sliding Window Rate Limit Check
-      const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "unknown";
+      const clientIp =
+        (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+        req.ip ||
+        "unknown";
       const now = Date.now();
       const rateLimitKey = "admin_api_" + clientIp;
       const rateEntry = adminApiRateLimits.get(rateLimitKey);
@@ -2765,7 +2737,8 @@ export function requireAdminApiKey(requiredScope?: string) {
             res.setHeader("Retry-After", "60");
             res.status(429).json({
               success: false,
-              error: "Too Many Requests: Rate limit exceeded (max 120 requests/minute). Please slow down.",
+              error:
+                "Too Many Requests: Rate limit exceeded (max 120 requests/minute). Please slow down.",
             });
             return;
           }
@@ -2780,7 +2753,8 @@ export function requireAdminApiKey(requiredScope?: string) {
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
         res.status(401).json({
           success: false,
-          error: "Unauthorized: Missing or malformed Bearer token in Authorization header",
+          error:
+            "Unauthorized: Missing or malformed Bearer token in Authorization header",
         });
         return;
       }
@@ -2826,7 +2800,10 @@ export function requireAdminApiKey(requiredScope?: string) {
           permissions = [];
         }
 
-        if (!permissions.includes(requiredScope) && !permissions.includes("admin:*")) {
+        if (
+          !permissions.includes(requiredScope) &&
+          !permissions.includes("admin:*")
+        ) {
           res.status(403).json({
             success: false,
             error: "Forbidden: API key lacks required scope " + requiredScope,
@@ -2854,7 +2831,7 @@ export function requireAdminApiKey(requiredScope?: string) {
     } catch (error: any) {
       res.status(500).json({
         success: false,
-        error: error.message || "Failed to authenticate Admin API key",
+        error: SAFE_SERVER_ERROR,
       });
     }
   };
@@ -2887,9 +2864,13 @@ apiRouter.post(
       // 1. Resolve target app (by app_id or app_slug)
       let resolvedAppId: string | null = null;
       let resolvedAppSlug: string | null = null;
-      const requestedAppIdentifier = (app_id || app_slug) ? String(app_id || app_slug).trim() : null;
+      const requestedAppIdentifier =
+        app_id || app_slug ? String(app_id || app_slug).trim() : null;
 
-      if (requestedAppIdentifier && requestedAppIdentifier.toLowerCase() !== "global") {
+      if (
+        requestedAppIdentifier &&
+        requestedAppIdentifier.toLowerCase() !== "global"
+      ) {
         const appRes = await db.execute({
           sql: "SELECT id, app_slug FROM apps WHERE id = ? OR app_slug = ? LIMIT 1",
           args: [requestedAppIdentifier, requestedAppIdentifier],
@@ -2929,7 +2910,9 @@ apiRouter.post(
         return;
       }
 
-      const finalKey = key ? key.trim().toUpperCase() : generateLicenseKey(prefix);
+      const finalKey = key
+        ? key.trim().toUpperCase()
+        : generateLicenseKey(prefix);
       const pin = generateLicensePin();
       const id = "lic_" + crypto.randomBytes(8).toString("hex");
       const now = Date.now();
@@ -2977,7 +2960,7 @@ apiRouter.post(
     } catch (error: any) {
       res.status(500).json({
         success: false,
-        error: error.message || "Failed to create license via Admin API",
+        error: SAFE_SERVER_ERROR,
       });
     }
   },
@@ -3011,7 +2994,11 @@ apiRouter.get(
       const now = Date.now();
       let currentStatus = lic.status as string;
 
-      if (lic.expires_at && now > Number(lic.expires_at) && currentStatus === "active") {
+      if (
+        lic.expires_at &&
+        now > Number(lic.expires_at) &&
+        currentStatus === "active"
+      ) {
         currentStatus = "expired";
         await db.execute({
           sql: "UPDATE licenses SET status = 'expired' WHERE id = ?",
@@ -3049,7 +3036,7 @@ apiRouter.get(
     } catch (error: any) {
       res.status(500).json({
         success: false,
-        error: error.message || "Failed to fetch license details via Admin API",
+        error: SAFE_SERVER_ERROR,
       });
     }
   },
@@ -3087,13 +3074,14 @@ apiRouter.post(
 
       res.json({
         success: true,
-        message: "All devices unbound successfully. License is fresh and ready for new hardware.",
+        message:
+          "All devices unbound successfully. License is fresh and ready for new hardware.",
         reset_devices_count: deleteRes.rowsAffected ?? 0,
       });
     } catch (error: any) {
       res.status(500).json({
         success: false,
-        error: error.message || "Failed to reset license devices via Admin API",
+        error: SAFE_SERVER_ERROR,
       });
     }
   },
@@ -3149,7 +3137,7 @@ apiRouter.patch(
     } catch (error: any) {
       res.status(500).json({
         success: false,
-        error: error.message || "Failed to update license status via Admin API",
+        error: SAFE_SERVER_ERROR,
       });
     }
   },
@@ -3167,16 +3155,16 @@ apiRouter.get(
     try {
       const db = getDbClient();
       const result = await db.execute(
-        "SELECT id, name, key_prefix, permissions_json, app_id, last_used_at, status, created_at FROM admin_api_keys ORDER BY created_at DESC"
+        "SELECT id, name, key_prefix, permissions_json, app_id, last_used_at, status, created_at FROM admin_api_keys ORDER BY created_at DESC",
       );
       res.json({
         success: true,
         keys: result.rows,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to fetch Admin API keys" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
-  }
+  },
 );
 
 // Create new API key
@@ -3203,7 +3191,7 @@ apiRouter.post(
       const permsJson = JSON.stringify(
         Array.isArray(permissions) && permissions.length > 0
           ? permissions
-          : ["licenses:create", "licenses:read", "licenses:manage"]
+          : ["licenses:create", "licenses:read", "licenses:manage"],
       );
 
       await db.execute({
@@ -3233,9 +3221,9 @@ apiRouter.post(
         },
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to create Admin API key" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
-  }
+  },
 );
 
 // Revoke/Delete API key
@@ -3250,9 +3238,12 @@ apiRouter.delete(
         sql: "DELETE FROM admin_api_keys WHERE id = ?",
         args: [id],
       });
-      res.json({ success: true, message: "Admin API key deleted successfully" });
+      res.json({
+        success: true,
+        message: "Admin API key deleted successfully",
+      });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Failed to delete Admin API key" });
+      res.status(500).json({ error: SAFE_SERVER_ERROR });
     }
-  }
+  },
 );
