@@ -3,8 +3,10 @@ import { Laptop, Search, Trash2, RefreshCw, Key } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { Device } from '../types';
 import { TablePagination } from './TablePagination';
+import { useConfirm } from '../context/ConfirmContext';
 
 export const DevicesTab: React.FC = () => {
+  const confirm = useConfirm();
   const [devices, setDevices] = useState<Device[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -61,7 +63,8 @@ export const DevicesTab: React.FC = () => {
   }, [devices, safeCurrentPage, pageSize]);
 
   const handleUnbind = async (id: string) => {
-    if (!confirm('Unbind this hardware device? The client slot will be freed immediately.')) return;
+    const ok = await confirm('Unbind this hardware device? The client slot will be freed immediately.');
+    if (!ok) return;
     try {
       setActionLoading(true);
       await api.unbindDevice(id);

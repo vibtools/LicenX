@@ -23,6 +23,7 @@ import { LandingPage } from './components/LandingPage';
 import { NotFoundPage } from './components/NotFoundPage';
 import { SiteSettings, DEFAULT_SITE_SETTINGS } from './types';
 import { Loader2 } from 'lucide-react';
+import { ConfirmProvider } from './context/ConfirmContext';
 
 export default function App() {
   const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
@@ -372,7 +373,8 @@ export default function App() {
 
   // Authenticated Admin Dashboard with Sidebar Layout
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-300 flex font-sans text-xs selection:bg-indigo-950/80 selection:text-slate-200 antialiased">
+    <ConfirmProvider>
+      <div className="min-h-screen bg-slate-950 text-slate-300 flex font-sans text-xs selection:bg-indigo-950/80 selection:text-slate-200 antialiased">
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
@@ -511,6 +513,7 @@ export default function App() {
           }}
         />
       )}
-    </div>
+      </div>
+    </ConfirmProvider>
   );
 }

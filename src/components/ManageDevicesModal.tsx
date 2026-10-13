@@ -3,6 +3,7 @@ import { X, Laptop, RotateCcw, Loader2 } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { License, Device } from '../types';
 import { TablePagination } from './TablePagination';
+import { useConfirm } from '../context/ConfirmContext';
 
 interface ManageDevicesModalProps {
   license: License;
@@ -15,6 +16,7 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
   onClose,
   onDevicesUpdated,
 }) => {
+  const confirm = useConfirm();
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -50,7 +52,8 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
   }, [devices, safeCurrentPage, pageSize]);
 
   const handleUnbind = async (deviceId: string) => {
-    if (!confirm('Unbind this hardware device from license?')) return;
+    const ok = await confirm('Unbind this hardware device from license?');
+    if (!ok) return;
     try {
       setActionLoading(true);
       await api.unbindDevice(deviceId);
@@ -64,7 +67,8 @@ export const ManageDevicesModal: React.FC<ManageDevicesModalProps> = ({
   };
 
   const handleResetAll = async () => {
-    if (!confirm('Reset ALL bound hardware devices for this license?')) return;
+    const ok = await confirm('Reset ALL bound hardware devices for this license?');
+    if (!ok) return;
     try {
       setActionLoading(true);
       await api.resetLicenseDevices(license.id);

@@ -19,12 +19,14 @@ import {
 } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { AdminApiKeyRecord, CreatedAdminApiKey } from '../types';
+import { useConfirm } from '../context/ConfirmContext';
 
 interface AdminApisTabProps {
   onNavigateToTab?: (tab: string) => void;
 }
 
 export const AdminApisTab: React.FC<AdminApisTabProps> = () => {
+  const confirm = useConfirm();
   const [keys, setKeys] = useState<AdminApiKeyRecord[]>([]);
   const [apps, setApps] = useState<{ id: string; display_name: string; app_slug: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,7 +118,13 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = () => {
   };
 
   const handleDeleteKey = async (id: string, name: string) => {
-    if (!window.confirm(`Revoke and delete key "${name}"?`)) return;
+    const ok = await confirm({
+      title: 'Revoke & Delete API Key',
+      message: `Revoke and permanently delete API key "${name}"? External systems using it will lose access immediately.`,
+      confirmText: 'Delete Key',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteAdminApiKey(id);
       setKeys((prev) => prev.filter((k) => k.id !== id));

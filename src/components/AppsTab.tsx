@@ -15,8 +15,10 @@ import { AppItem } from '../types';
 import { CreateAppModal } from './CreateAppModal';
 import { EditAppModal } from './EditAppModal';
 import { TablePagination } from './TablePagination';
+import { useConfirm } from '../context/ConfirmContext';
 
 export const AppsTab: React.FC = () => {
+  const confirm = useConfirm();
   const [apps, setApps] = useState<AppItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -124,7 +126,10 @@ export const AppsTab: React.FC = () => {
 
   const handleBulkAction = async (action: string) => {
     if (selectedIds.length === 0) return;
-    if (action === 'delete' && !confirm(`Delete ${selectedIds.length} applications? Linked licenses will become global.`)) return;
+    if (action === 'delete') {
+      const ok = await confirm(`Delete ${selectedIds.length} applications? Linked licenses will become global.`);
+      if (!ok) return;
+    }
 
     try {
       await api.bulkAppAction({ ids: selectedIds, action });
@@ -136,7 +141,8 @@ export const AppsTab: React.FC = () => {
   };
 
   const handleDeleteSingle = async (id: string, name: string) => {
-    if (!confirm(`Delete application "${name}"? Linked licenses will be set to global.`)) return;
+    const ok = await confirm(`Delete application "${name}"? Linked licenses will be set to global.`);
+    if (!ok) return;
     try {
       await api.deleteApp(id);
       await loadApps();

@@ -3,8 +3,10 @@ import { Terminal, Trash2, RefreshCw } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { ValidationLog } from '../types';
 import { TablePagination } from './TablePagination';
+import { useConfirm } from '../context/ConfirmContext';
 
 export const LogsTab: React.FC = () => {
+  const confirm = useConfirm();
   const [logs, setLogs] = useState<ValidationLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionFilter, setActionFilter] = useState(() => {
@@ -63,7 +65,8 @@ export const LogsTab: React.FC = () => {
   }, [logs, safeCurrentPage, pageSize]);
 
   const handleClearLogs = async () => {
-    if (!confirm('Clear all audit logs permanently?')) return;
+    const ok = await confirm('Clear all audit logs permanently?');
+    if (!ok) return;
     try {
       await api.clearLogs();
       await loadLogs();
