@@ -1801,18 +1801,50 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
   const now = Date.now();
 
   try {
+    const invalidValidationRequest = () =>
+      res.status(400).json({
+        valid: false,
+        code: "INVALID_REQUEST",
+        message: "Invalid validation request",
+      });
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      invalidValidationRequest();
+      return;
+    }
+
     const {
       license_key,
-      hwid,
+      hwid: rawHwid,
       device_name = "Unknown",
       os_info = "Unknown",
       app_name, // can be app_slug (e.g. "dark_tool_pro") or app_id
-      app_version = "1.0.0",
+      app_version,
+      client_version,
       client_time,
     } = req.body;
 
-    if (!license_key || !hwid) {
-      res.status(400).json({ error: "license_key and hwid are required" });
+    const optionalStringFields = [
+      app_name,
+      device_name,
+      os_info,
+      app_version,
+      client_version,
+    ];
+    if (
+      typeof license_key !== "string" ||
+      !license_key.trim() ||
+      typeof rawHwid !== "string" ||
+      !rawHwid.trim() ||
+      optionalStringFields.some(
+        (value) => value !== undefined && typeof value !== "string",
+      )
+    ) {
+      invalidValidationRequest();
+      return;
+    }
+    const hwid = rawHwid.trim();
+    if (!hwid) {
+      invalidValidationRequest();
       return;
     }
 
@@ -1884,7 +1916,16 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
       }
 
       // Check min_version
-      if (matchedApp.min_version && app_version) {
+      const appVersion = app_version || client_version;
+      if (matchedApp.min_version && !appVersion) {
+        res.status(400).json({
+          valid: false,
+          code: "APP_VERSION_REQUIRED",
+          message: "Application version is required",
+        });
+        return;
+      }
+      if (matchedApp.min_version && appVersion) {
         // Simple semver compare helper: returns true if v1 < v2
         const isOutdated = (current: string, minRequired: string) => {
           const cParts = current.split(".").map((p) => parseInt(p) || 0);
@@ -1898,10 +1939,10 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
           return false;
         };
 
-        if (isOutdated(app_version, matchedApp.min_version)) {
+        if (isOutdated(appVersion, matchedApp.min_version)) {
           await db.execute({
             sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
-                  VALUES (?, ?, ?, ?, ?, 'reject', 426, 'Application version outdated (${app_version} < ${matchedApp.min_version})', ?)`,
+                  VALUES (?, ?, ?, ?, ?, 'reject', 426, 'Application version outdated (${appVersion} < ${matchedApp.min_version})', ?)`,
             args: [
               "log_" + crypto.randomBytes(6).toString("hex"),
               license_key,
@@ -1914,8 +1955,8 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
           res.status(426).json({
             valid: false,
             code: "APP_VERSION_OUTDATED",
-            message: `Update required. Client version: ${app_version}, Minimum required: ${matchedApp.min_version}`,
-            current_version: app_version,
+            message: `Update required. Client version: ${appVersion}, Minimum required: ${matchedApp.min_version}`,
+            current_version: appVersion,
             min_version: matchedApp.min_version,
           });
           return;

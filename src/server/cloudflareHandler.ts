@@ -75,6 +75,32 @@ function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ error: message }, status);
 }
 
+function isValidLicenseValidationPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+
+  const fields = payload as Record<string, unknown>;
+  if (
+    typeof fields.license_key !== "string" ||
+    !fields.license_key.trim() ||
+    typeof fields.hwid !== "string" ||
+    !fields.hwid.trim()
+  ) {
+    return false;
+  }
+
+  return [
+    "app_name",
+    "device_name",
+    "os_info",
+    "app_version",
+    "client_version",
+  ].every((fieldName) => {
+    const value = fields[fieldName];
+    return value === undefined || typeof value === "string";
+  });
+}
 // In-memory admin auth caching to prevent redundant DB roundtrips on every request
 let cachedAdminConfig: {
   jwtSecret: string;
@@ -347,6 +373,19 @@ export async function handleCloudflareApi(
     } catch {
       body = {};
     }
+  }
+  const isLicenseValidationRequest =
+    normalizedPath === "/v1/license/validate" && method === "POST";
+
+  if (isLicenseValidationRequest && !isValidLicenseValidationPayload(body)) {
+    return jsonResponse(
+      {
+        valid: false,
+        code: "INVALID_REQUEST",
+        message: "Invalid validation request",
+      },
+      400,
+    );
   }
 
   // Extract client IP
@@ -1834,6 +1873,7 @@ export async function handleCloudflareApi(
 
       const cleanKey = license_key.trim().toUpperCase();
       const cleanHwid = hwid.trim();
+      if (!cleanHwid) return errorResponse("Missing license_key or hwid");
       const now = Date.now();
 
       // 1. Fetch server keys for signing
@@ -1903,6 +1943,16 @@ export async function handleCloudflareApi(
         }
 
         const appVersion = body.app_version || client_version;
+        if (matchedApp.min_version && !appVersion) {
+          return jsonResponse(
+            {
+              valid: false,
+              code: "APP_VERSION_REQUIRED",
+              message: "Application version is required",
+            },
+            400,
+          );
+        }
         if (matchedApp.min_version && appVersion) {
           const isOutdated = (current: string, minRequired: string) => {
             const cParts = current.split(".").map((p) => parseInt(p) || 0);

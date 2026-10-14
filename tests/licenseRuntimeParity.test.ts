@@ -89,21 +89,37 @@ after(async () => {
   }
 });
 
-async function validateWithNode() {
+async function validateWithNode(payload: unknown = {}) {
+  const objectPayload =
+    payload !== null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : undefined;
   const response = await fetch(`${baseUrl}/api/v1/license/validate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ license_key: licenseKey, hwid: requestHwid }),
+    body: JSON.stringify(
+      objectPayload
+        ? { license_key: licenseKey, hwid: requestHwid, ...objectPayload }
+        : payload,
+    ),
   });
   return { status: response.status, body: await response.json() };
 }
 
-async function validateWithCloudflare() {
+async function validateWithCloudflare(payload: unknown = {}) {
+  const objectPayload =
+    payload !== null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : undefined;
   const response = await handleCloudflareApi(
     new Request("https://licenx.test/api/v1/license/validate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ license_key: licenseKey, hwid: requestHwid }),
+      body: JSON.stringify(
+        objectPayload
+          ? { license_key: licenseKey, hwid: requestHwid, ...objectPayload }
+          : payload,
+      ),
     }),
     undefined,
   );
@@ -219,6 +235,145 @@ test("Node and Cloudflare both accept an active license within its limit", async
   assert.equal(cloudflareResult.status, 200);
   assert.equal(nodeResult.body.valid, true);
   assert.equal(cloudflareResult.body.valid, true);
+});
+
+test("Node and Cloudflare enforce the same configured minimum version", async () => {
+  const appId = "app-version-parity-test";
+  const appSlug = "version-parity-test";
+  const now = Date.now();
+  await db.execute({
+    sql: `INSERT INTO apps
+          (id, app_slug, display_name, min_version, status, app_secret,
+           created_at, updated_at)
+          VALUES (?, ?, 'Version Parity Test', '2.0.0', 'active', 'sec-test', ?, ?)`,
+    args: [appId, appSlug, now, now],
+  });
+
+  const cases = [
+    {
+      payload: { app_name: appSlug },
+      status: 400,
+      code: "APP_VERSION_REQUIRED",
+    },
+    {
+      payload: { app_name: appSlug, app_version: "2.1.0" },
+      status: 200,
+      code: undefined,
+    },
+    {
+      payload: { app_name: appSlug, client_version: "2.1.0" },
+      status: 200,
+      code: undefined,
+    },
+    {
+      payload: { app_name: appSlug, app_version: "1.9.0" },
+      status: 426,
+      code: "APP_VERSION_OUTDATED",
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const nodeResult = await validateWithNode(testCase.payload);
+    const cloudflareResult = await validateWithCloudflare(testCase.payload);
+    assert.equal(nodeResult.status, testCase.status);
+    assert.equal(cloudflareResult.status, testCase.status);
+    assert.equal(nodeResult.body.code, testCase.code);
+    assert.equal(cloudflareResult.body.code, testCase.code);
+    assert.equal(nodeResult.body.valid, testCase.status === 200);
+    assert.equal(cloudflareResult.body.valid, testCase.status === 200);
+  }
+
+  const bindings = await db.execute(
+    "SELECT COUNT(*) AS count FROM devices WHERE license_id = ?",
+    [licenseId],
+  );
+  assert.equal(Number(bindings.rows[0]?.count), 1);
+});
+
+test("Node and Cloudflare canonicalize HWIDs before binding and logging", async () => {
+  const canonicalHwid = "HWID-CANONICAL-PARITY-TEST";
+  const paddedHwid = ` \t${canonicalHwid}\n `;
+  const nodeResult = await validateWithNode({ hwid: paddedHwid });
+  const cloudflareResult = await validateWithCloudflare({ hwid: paddedHwid });
+
+  assert.equal(nodeResult.status, 200);
+  assert.equal(cloudflareResult.status, 200);
+  assert.equal(nodeResult.body.hwid, canonicalHwid);
+  assert.equal(cloudflareResult.body.hwid, canonicalHwid);
+
+  const bindings = await db.execute({
+    sql: "SELECT hwid FROM devices WHERE license_id = ?",
+    args: [licenseId],
+  });
+  assert.deepEqual(
+    bindings.rows.map((row) => row.hwid),
+    [canonicalHwid],
+  );
+
+  const auditRows = await db.execute({
+    sql: "SELECT hwid FROM validation_logs WHERE license_key = ?",
+    args: [licenseKey],
+  });
+  assert.deepEqual(
+    auditRows.rows.map((row) => row.hwid),
+    [canonicalHwid, canonicalHwid],
+  );
+
+  const emptyNodeResult = await validateWithNode({ hwid: " \t\n " });
+  const emptyCloudflareResult = await validateWithCloudflare({
+    hwid: " \t\n ",
+  });
+  assert.equal(emptyNodeResult.status, 400);
+  assert.equal(emptyCloudflareResult.status, 400);
+
+  const unchangedBindings = await db.execute(
+    "SELECT COUNT(*) AS count FROM devices WHERE license_id = ?",
+    [licenseId],
+  );
+  assert.equal(Number(unchangedBindings.rows[0]?.count), 1);
+});
+
+test("Node and Cloudflare reject malformed validation payloads consistently", async () => {
+  const malformedPayloads = [
+    [],
+    { license_key: undefined },
+    { hwid: undefined },
+    { license_key: null },
+    { license_key: 42 },
+    { license_key: [] },
+    { hwid: null },
+    { hwid: { value: requestHwid } },
+    { app_name: 42 },
+    { device_name: null },
+    { os_info: [] },
+    { app_version: 1 },
+    { client_version: {} },
+  ] as const;
+  const expectedError = {
+    valid: false,
+    code: "INVALID_REQUEST",
+    message: "Invalid validation request",
+  };
+
+  for (const payload of malformedPayloads) {
+    const nodeResult = await validateWithNode(payload);
+    const cloudflareResult = await validateWithCloudflare(payload);
+    assert.equal(nodeResult.status, 400);
+    assert.equal(cloudflareResult.status, 400);
+    assert.deepEqual(nodeResult.body, expectedError);
+    assert.deepEqual(cloudflareResult.body, expectedError);
+  }
+
+  const bindings = await db.execute(
+    "SELECT COUNT(*) AS count FROM devices WHERE license_id = ?",
+    [licenseId],
+  );
+  const validationLogs = await db.execute(
+    "SELECT COUNT(*) AS count FROM validation_logs WHERE license_key = ?",
+    [licenseKey],
+  );
+  assert.equal(Number(bindings.rows[0]?.count), 0);
+  assert.equal(Number(validationLogs.rows[0]?.count), 0);
 });
 
 test("Node validation frees a stale slot for a new device in both runtimes", async () => {
