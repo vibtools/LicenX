@@ -21,6 +21,22 @@ import {
   getUserControlPinRateLimit,
   recordFailedUserControlPinAttempt,
 } from "./userControlRateLimit.js";
+import {
+  ADMIN_CSRF_COOKIE,
+  ADMIN_SESSION_COOKIE,
+  clearAdminSessionCookie,
+  createAdminCsrfCookie,
+  createAdminSessionCookie,
+  getCookieValue,
+  hasBrowserRequestHeaders,
+  isValidAdminCsrfRequest,
+} from "./adminAuthCookies.js";
+import {
+  clearAdminLoginAttempts,
+  createAdminLoginAttemptKey,
+  getAdminLoginRateLimit,
+  recordFailedAdminLoginAttempt,
+} from "./adminLoginRateLimit.js";
 
 const SAFE_SERVER_ERROR = "Internal server error";
 
@@ -28,7 +44,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, X-Requested-With",
+    "Content-Type, Authorization, X-Requested-With, X-CSRF-Token",
 };
 
 function jsonResponse(
@@ -66,16 +82,41 @@ export function invalidateAdminConfigCache(): void {
 async function verifyAdminAuth(
   request: Request,
   env: any,
-): Promise<{ authorized: boolean; username?: string; error?: string }> {
+): Promise<{
+  authorized: boolean;
+  username?: string;
+  error?: string;
+  status?: number;
+}> {
   try {
     const authHeader =
       request.headers.get("authorization") ||
       request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const cookieToken = getCookieValue(
+      request.headers.get("cookie"),
+      ADMIN_SESSION_COOKIE,
+    );
+    const useCookie = !authHeader && Boolean(cookieToken);
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : useCookie
+        ? cookieToken
+        : null;
+    if (!token) {
       return { authorized: false, error: "Unauthorized: Missing token" };
     }
 
-    const token = authHeader.split(" ")[1];
+    if (
+      useCookie &&
+      !["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase()) &&
+      !isValidAdminCsrfRequest(request)
+    ) {
+      return {
+        authorized: false,
+        error: "Invalid CSRF token",
+        status: 403,
+      };
+    }
     const now = Date.now();
     let jwtSecret = "";
     let username = "";
@@ -384,6 +425,13 @@ export async function handleCloudflareApi(
     }
 
     if (normalizedPath === "/setup/init" && method === "POST") {
+      if (
+        hasBrowserRequestHeaders(request) &&
+        !isValidAdminCsrfRequest(request)
+      ) {
+        return errorResponse("Invalid CSRF token", 403);
+      }
+
       const existing = await db.execute("SELECT id FROM admin_config LIMIT 1");
       if (existing.rows.length > 0) {
         return errorResponse("Admin is already initialized. Please login.");
@@ -394,8 +442,8 @@ export async function handleCloudflareApi(
         return errorResponse("Username and password are required");
       }
 
-      if (password.length < 6) {
-        return errorResponse("Password must be at least 6 characters");
+      if (typeof password !== "string" || password.length < 12) {
+        return errorResponse("Password must be at least 12 characters");
       }
 
       const keypair = generateRSAKeyPair(2048);
@@ -431,21 +479,71 @@ export async function handleCloudflareApi(
         jwtSecret,
       );
 
-      return jsonResponse({
-        success: true,
-        token,
-        username: username.trim(),
-        publicKeyPem: keypair.publicKeyPem,
-      });
+      return jsonResponse(
+        {
+          success: true,
+          username: username.trim(),
+          publicKeyPem: keypair.publicKeyPem,
+        },
+        200,
+        { "Set-Cookie": createAdminSessionCookie(token) },
+      );
     }
 
     // -----------------------------------------------------------------
     // AUTHENTICATION
     // -----------------------------------------------------------------
+    if (normalizedPath === "/auth/csrf" && method === "GET") {
+      const existingToken = getCookieValue(
+        request.headers.get("cookie"),
+        ADMIN_CSRF_COOKIE,
+      );
+      const csrfToken =
+        existingToken && /^[0-9a-f]{64}$/.test(existingToken)
+          ? existingToken
+          : crypto.randomBytes(32).toString("hex");
+      return jsonResponse(
+        { csrfToken },
+        200,
+        { "Set-Cookie": createAdminCsrfCookie(csrfToken) },
+      );
+    }
+
+    if (normalizedPath === "/auth/logout" && method === "POST") {
+      if (
+        hasBrowserRequestHeaders(request) &&
+        !isValidAdminCsrfRequest(request)
+      ) {
+        return errorResponse("Invalid CSRF token", 403);
+      }
+      return jsonResponse(
+        { success: true },
+        200,
+        { "Set-Cookie": clearAdminSessionCookie() },
+      );
+    }
+
     if (normalizedPath === "/auth/login" && method === "POST") {
+      if (
+        hasBrowserRequestHeaders(request) &&
+        !isValidAdminCsrfRequest(request)
+      ) {
+        return errorResponse("Invalid CSRF token", 403);
+      }
+
       const { username, password } = body;
       if (!username || !password) {
         return errorResponse("Username and password required");
+      }
+
+      const attemptKey = createAdminLoginAttemptKey(username, ip);
+      const currentLimit = await getAdminLoginRateLimit(db, attemptKey);
+      if (currentLimit.blocked) {
+        return jsonResponse(
+          { error: "Too many login attempts. Try again later." },
+          429,
+          { "Retry-After": String(currentLimit.retryAfterSeconds) },
+        );
       }
 
       const result = await db.execute({
@@ -454,15 +552,38 @@ export async function handleCloudflareApi(
       });
 
       if (result.rows.length === 0) {
-        return errorResponse("Invalid credentials", 401);
+        const limit = await recordFailedAdminLoginAttempt(db, attemptKey);
+        return jsonResponse(
+          {
+            error: limit.blocked
+              ? "Too many login attempts. Try again later."
+              : "Invalid credentials",
+          },
+          limit.blocked ? 429 : 401,
+          limit.blocked
+            ? { "Retry-After": String(limit.retryAfterSeconds) }
+            : {},
+        );
       }
 
       const row = result.rows[0];
       const isValid = verifyPassword(password, row.password_hash as string);
       if (!isValid) {
-        return errorResponse("Invalid credentials", 401);
+        const limit = await recordFailedAdminLoginAttempt(db, attemptKey);
+        return jsonResponse(
+          {
+            error: limit.blocked
+              ? "Too many login attempts. Try again later."
+              : "Invalid credentials",
+          },
+          limit.blocked ? 429 : 401,
+          limit.blocked
+            ? { "Retry-After": String(limit.retryAfterSeconds) }
+            : {},
+        );
       }
 
+      await clearAdminLoginAttempts(db, attemptKey);
       const token = createSessionToken(
         {
           username: row.username as string,
@@ -471,17 +592,20 @@ export async function handleCloudflareApi(
         row.jwt_secret as string,
       );
 
-      return jsonResponse({
-        success: true,
-        token,
-        username: row.username,
-      });
+      return jsonResponse(
+        {
+          success: true,
+          username: row.username,
+        },
+        200,
+        { "Set-Cookie": createAdminSessionCookie(token) },
+      );
     }
 
     if (normalizedPath === "/auth/me" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const configResult = await db.execute(
         "SELECT ed25519_public_key, r2_config_json FROM admin_config LIMIT 1",
@@ -499,9 +623,15 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/auth/update-credentials" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const { currentPassword, newUsername, newPassword } = body;
+      if (
+        newPassword !== undefined &&
+        (typeof newPassword !== "string" || newPassword.length < 12)
+      ) {
+        return errorResponse("Password must be at least 12 characters");
+      }
       const configResult = await db.execute(
         "SELECT id, username, password_hash, jwt_secret FROM admin_config LIMIT 1",
       );
@@ -545,11 +675,14 @@ export async function handleCloudflareApi(
         newJwtSecret,
       );
 
-      return jsonResponse({
-        success: true,
-        token,
-        username: targetUsername,
-      });
+      return jsonResponse(
+        {
+          success: true,
+          username: targetUsername,
+        },
+        200,
+        { "Set-Cookie": createAdminSessionCookie(token) },
+      );
     }
 
     // -----------------------------------------------------------------
@@ -558,7 +691,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/apps" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const search = url.searchParams.get("search");
       const status = url.searchParams.get("status");
@@ -616,7 +749,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/apps" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const { app_slug, display_name, min_version, app_secret, description } =
         body;
@@ -687,7 +820,7 @@ export async function handleCloudflareApi(
     ) {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       // GET /apps/:id/config
       if (normalizedPath.endsWith("/config") && method === "GET") {
@@ -791,7 +924,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/apps/bulk-action" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const action = body.action;
       const ids = body.ids || body.app_ids;
@@ -835,7 +968,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/licenses" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const status = url.searchParams.get("status");
       const appId = url.searchParams.get("app_id");
@@ -922,7 +1055,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/licenses" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const {
         key,
@@ -994,7 +1127,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/licenses/bulk" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const {
         count = 10,
@@ -1127,7 +1260,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/licenses/bulk-action" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const action = body.action;
       const ids = body.ids || body.license_ids;
@@ -1190,7 +1323,7 @@ export async function handleCloudflareApi(
     ) {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const licenseId = normalizedPath.replace("/licenses/", "");
 
@@ -1277,7 +1410,7 @@ export async function handleCloudflareApi(
     ) {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const licId = normalizedPath.split("/")[2];
 
@@ -1311,7 +1444,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/devices" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const search = url.searchParams.get("search");
       const limit = Number(url.searchParams.get("limit") || "50");
@@ -1361,7 +1494,7 @@ export async function handleCloudflareApi(
     if (normalizedPath.startsWith("/devices/") && method === "DELETE") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const devId = normalizedPath.replace("/devices/", "");
       await db.execute({
@@ -1915,7 +2048,6 @@ export async function handleCloudflareApi(
         ipAddress: ip,
         now,
         deviceLimit,
-        reactivationLimitPolicy: "logged-out-only",
         rejectBlocked: true,
       });
 
@@ -2059,16 +2191,29 @@ export async function handleCloudflareApi(
         );
       }
 
+      const configRes = await db.execute(
+        "SELECT ed25519_private_key FROM admin_config LIMIT 1",
+      );
+      if (configRes.rows.length === 0)
+        return errorResponse(SAFE_SERVER_ERROR, 503);
+
       await db.execute({
         sql: "UPDATE devices SET last_ping_at = ? WHERE license_id = ? AND hwid = ?",
         args: [now, lic.id as string, cleanHwid],
       });
 
-      return jsonResponse({
+      const signedData: Record<string, unknown> = {
         valid: true,
         status: "active",
         server_time: now,
-      });
+        nonce: typeof nonce === "string" ? nonce : "",
+      };
+      const signature = await signPayloadForCloudflare(
+        canonicalJson(signedData),
+        configRes.rows[0].ed25519_private_key as string,
+      );
+
+      return jsonResponse({ ...signedData, signature });
     }
 
     if (
@@ -2124,7 +2269,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/stats" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const oneDayAgo = Date.now() - 86400 * 1000;
       const statsRes = await db.execute({
@@ -2159,7 +2304,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/logs" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const limit = Number(url.searchParams.get("limit") || "100");
       const offset = Number(url.searchParams.get("offset") || "0");
@@ -2181,7 +2326,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/logs" && method === "DELETE") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       await db.execute("DELETE FROM validation_logs");
       return jsonResponse({ success: true, message: "All logs cleared" });
@@ -2193,7 +2338,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/settings" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const configRes = await db.execute(
         "SELECT username, ed25519_public_key, r2_config_json FROM admin_config LIMIT 1",
@@ -2243,7 +2388,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/settings/r2" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const { accountId, accessKeyId, secretAccessKey, bucketName, publicUrl } =
         body;
@@ -2303,7 +2448,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/settings/r2/test" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const testConfig = { ...(body as R2Config) };
       let finalSecret = (testConfig.secretAccessKey || "").trim();
@@ -2341,7 +2486,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/r2/backups" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const result = await db.execute(
         "SELECT * FROM r2_backups ORDER BY created_at DESC LIMIT 50",
@@ -2352,7 +2497,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/settings/crypto/rotate" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const newKeypair = generateRSAKeyPair(2048);
       await db.execute({
@@ -2420,7 +2565,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/settings/site" && method === "GET") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const configRes = await db.execute(
         "SELECT site_settings_json, r2_config_json FROM admin_config LIMIT 1",
@@ -2455,7 +2600,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/settings/site" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const configRes = await db.execute(
         "SELECT site_settings_json FROM admin_config LIMIT 1",
@@ -2488,7 +2633,7 @@ export async function handleCloudflareApi(
     if (normalizedPath === "/settings/upload" && method === "POST") {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const {
         filename,
@@ -2616,7 +2761,7 @@ export async function handleCloudflareApi(
     ) {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const result = await db.execute(
         "SELECT id, name, key_prefix, permissions_json, app_id, last_used_at, status, created_at FROM admin_api_keys ORDER BY created_at DESC",
@@ -2634,7 +2779,7 @@ export async function handleCloudflareApi(
     ) {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const {
         name,
@@ -2693,7 +2838,7 @@ export async function handleCloudflareApi(
     ) {
       const auth = await verifyAdminAuth(request, env);
       if (!auth.authorized)
-        return errorResponse(auth.error || "Unauthorized", 401);
+        return errorResponse(auth.error || "Unauthorized", auth.status || 401);
 
       const keyId = normalizedPath.replace(/^\/(api\/)?admin-api-keys\//, "");
       await db.execute({

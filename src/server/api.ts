@@ -25,6 +25,21 @@ import {
   getUserControlPinRateLimit,
   recordFailedUserControlPinAttempt,
 } from "./userControlRateLimit.js";
+import {
+  ADMIN_CSRF_COOKIE,
+  ADMIN_SESSION_COOKIE,
+  clearAdminSessionCookie,
+  createAdminCsrfCookie,
+  createAdminSessionCookie,
+  getCookieValue,
+  isValidAdminCsrfValues,
+} from "./adminAuthCookies.js";
+import {
+  clearAdminLoginAttempts,
+  createAdminLoginAttemptKey,
+  getAdminLoginRateLimit,
+  recordFailedAdminLoginAttempt,
+} from "./adminLoginRateLimit.js";
 const archiver = (archiverModule as any).default || archiverModule;
 const SAFE_SERVER_ERROR = "Internal server error";
 
@@ -38,6 +53,30 @@ let cachedAdminConfig: {
 } | null = null;
 const ADMIN_CONFIG_CACHE_TTL = 60 * 1000; // 60 seconds
 
+function adminRequestUrl(req: Request): string {
+  return `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+}
+
+function isBrowserRequest(req: Request): boolean {
+  return Boolean(
+    req.headers.origin ||
+      req.headers["sec-fetch-site"] ||
+      req.headers["x-csrf-token"] ||
+      getCookieValue(req.headers.cookie, ADMIN_CSRF_COOKIE) ||
+      getCookieValue(req.headers.cookie, ADMIN_SESSION_COOKIE),
+  );
+}
+
+function hasValidAdminCsrf(req: Request): boolean {
+  return isValidAdminCsrfValues(
+    req.headers.cookie,
+    req.headers["x-csrf-token"] as string | undefined,
+    req.headers.origin,
+    adminRequestUrl(req),
+    req.headers["sec-fetch-site"] as string | undefined,
+  );
+}
+
 export function invalidateAdminConfigCache(): void {
   cachedAdminConfig = null;
 }
@@ -50,12 +89,26 @@ async function requireAdminAuth(
 ): Promise<void> {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const cookieToken = getCookieValue(req.headers.cookie, ADMIN_SESSION_COOKIE);
+    const useCookie = !authHeader && Boolean(cookieToken);
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : useCookie
+        ? cookieToken
+        : null;
+    if (!token) {
       res.status(401).json({ error: "Unauthorized: Missing token" });
       return;
     }
 
-    const token = authHeader.split(" ")[1];
+    if (
+      useCookie &&
+      !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase()) &&
+      !hasValidAdminCsrf(req)
+    ) {
+      res.status(403).json({ error: "Invalid CSRF token" });
+      return;
+    }
     const now = Date.now();
     let jwtSecret = "";
     let username = "";
@@ -146,6 +199,11 @@ apiRouter.get("/setup/status", async (req: Request, res: Response) => {
 
 apiRouter.post("/setup/init", async (req: Request, res: Response) => {
   try {
+    if (isBrowserRequest(req) && !hasValidAdminCsrf(req)) {
+      res.status(403).json({ error: "Invalid CSRF token" });
+      return;
+    }
+
     const db = getDbClient();
     const existing = await db.execute("SELECT id FROM admin_config LIMIT 1");
     if (existing.rows.length > 0) {
@@ -161,8 +219,8 @@ apiRouter.post("/setup/init", async (req: Request, res: Response) => {
       return;
     }
 
-    if (password.length < 6) {
-      res.status(400).json({ error: "Password must be at least 6 characters" });
+    if (typeof password !== "string" || password.length < 12) {
+      res.status(400).json({ error: "Password must be at least 12 characters" });
       return;
     }
 
@@ -198,9 +256,9 @@ apiRouter.post("/setup/init", async (req: Request, res: Response) => {
       jwtSecret,
     );
 
+    res.setHeader("Set-Cookie", createAdminSessionCookie(token));
     res.json({
       success: true,
-      token,
       username: username.trim(),
       publicKeyPem: keypair.publicKeyPem,
     });
@@ -213,8 +271,32 @@ apiRouter.post("/setup/init", async (req: Request, res: Response) => {
 // AUTH
 // -------------------------------------------------------------
 
+apiRouter.get("/auth/csrf", (req: Request, res: Response) => {
+  const existingToken = getCookieValue(req.headers.cookie, ADMIN_CSRF_COOKIE);
+  const token =
+    existingToken && /^[0-9a-f]{64}$/.test(existingToken)
+      ? existingToken
+      : crypto.randomBytes(32).toString("hex");
+  res.setHeader("Set-Cookie", createAdminCsrfCookie(token));
+  res.json({ csrfToken: token });
+});
+
+apiRouter.post("/auth/logout", (req: Request, res: Response) => {
+  if (isBrowserRequest(req) && !hasValidAdminCsrf(req)) {
+    res.status(403).json({ error: "Invalid CSRF token" });
+    return;
+  }
+  res.setHeader("Set-Cookie", clearAdminSessionCookie());
+  res.json({ success: true });
+});
+
 apiRouter.post("/auth/login", async (req: Request, res: Response) => {
   try {
+    if (isBrowserRequest(req) && !hasValidAdminCsrf(req)) {
+      res.status(403).json({ error: "Invalid CSRF token" });
+      return;
+    }
+
     const { username, password } = req.body;
     if (!username || !password) {
       res.status(400).json({ error: "Username and password required" });
@@ -222,13 +304,30 @@ apiRouter.post("/auth/login", async (req: Request, res: Response) => {
     }
 
     const db = getDbClient();
+    const attemptKey = createAdminLoginAttemptKey(
+      username,
+      req.ip || req.socket.remoteAddress || "unknown",
+    );
+    const currentLimit = await getAdminLoginRateLimit(db, attemptKey);
+    if (currentLimit.blocked) {
+      res.setHeader("Retry-After", String(currentLimit.retryAfterSeconds));
+      res.status(429).json({ error: "Too many login attempts. Try again later." });
+      return;
+    }
+
     const result = await db.execute({
       sql: "SELECT username, password_hash, jwt_secret FROM admin_config WHERE username = ? LIMIT 1",
       args: [username.trim()],
     });
 
     if (result.rows.length === 0) {
-      res.status(401).json({ error: "Invalid credentials" });
+      const limit = await recordFailedAdminLoginAttempt(db, attemptKey);
+      if (limit.blocked) {
+        res.setHeader("Retry-After", String(limit.retryAfterSeconds));
+      }
+      res
+        .status(limit.blocked ? 429 : 401)
+        .json({ error: limit.blocked ? "Too many login attempts. Try again later." : "Invalid credentials" });
       return;
     }
 
@@ -236,10 +335,17 @@ apiRouter.post("/auth/login", async (req: Request, res: Response) => {
     const isValid = verifyPassword(password, row.password_hash as string);
 
     if (!isValid) {
-      res.status(401).json({ error: "Invalid credentials" });
+      const limit = await recordFailedAdminLoginAttempt(db, attemptKey);
+      if (limit.blocked) {
+        res.setHeader("Retry-After", String(limit.retryAfterSeconds));
+      }
+      res
+        .status(limit.blocked ? 429 : 401)
+        .json({ error: limit.blocked ? "Too many login attempts. Try again later." : "Invalid credentials" });
       return;
     }
 
+    await clearAdminLoginAttempts(db, attemptKey);
     const token = createSessionToken(
       {
         username: row.username as string,
@@ -248,9 +354,9 @@ apiRouter.post("/auth/login", async (req: Request, res: Response) => {
       row.jwt_secret as string,
     );
 
+    res.setHeader("Set-Cookie", createAdminSessionCookie(token));
     res.json({
       success: true,
-      token,
       username: row.username,
     });
   } catch (error: any) {
@@ -288,6 +394,13 @@ apiRouter.post(
   async (req: Request, res: Response) => {
     try {
       const { currentPassword, newUsername, newPassword } = req.body;
+      if (
+        newPassword !== undefined &&
+        (typeof newPassword !== "string" || newPassword.length < 12)
+      ) {
+        res.status(400).json({ error: "Password must be at least 12 characters" });
+        return;
+      }
       const db = getDbClient();
       const configResult = await db.execute(
         "SELECT id, username, password_hash, jwt_secret FROM admin_config LIMIT 1",
@@ -327,6 +440,8 @@ apiRouter.post(
         ],
       });
 
+      invalidateAdminConfigCache();
+
       const token = createSessionToken(
         {
           username: targetUsername,
@@ -335,9 +450,9 @@ apiRouter.post(
         newJwtSecret,
       );
 
+      res.setHeader("Set-Cookie", createAdminSessionCookie(token));
       res.json({
         success: true,
-        token,
         username: targetUsername,
       });
     } catch (error: any) {
@@ -1815,6 +1930,22 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
     }
 
     // 6. Expiry / First Activation Check
+    if (license.status !== "active") {
+      const status = String(license.status ?? "unknown");
+      res.status(403).json({
+        valid: false,
+        code:
+          status === "expired"
+            ? "LICENSE_EXPIRED"
+            : `LICENSE_${status.toUpperCase()}`,
+        message:
+          status === "expired"
+            ? "License has expired"
+            : `License is currently ${status}`,
+      });
+      return;
+    }
+
     let activatedAt = license.activated_at as number | null;
     let expiresAt = license.expires_at as number | null;
 
@@ -1874,9 +2005,17 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
       ipAddress: ip,
       now,
       deviceLimit,
-      reactivationLimitPolicy: "all-inactive",
-      rejectBlocked: false,
+      rejectBlocked: true,
     });
+
+    if (binding.status === "blocked") {
+      res.status(403).json({
+        valid: false,
+        code: "DEVICE_BLOCKED",
+        message: "This machine is blocked",
+      });
+      return;
+    }
 
     if (binding.status === "limit") {
       const message = binding.existingDevice
@@ -1956,7 +2095,7 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
 // Ping Heartbeat
 apiRouter.post("/v1/license/ping", async (req: Request, res: Response) => {
   try {
-    const { license_key, hwid, app_name } = req.body;
+    const { license_key, hwid, nonce } = req.body;
     if (!license_key || !hwid) {
       res.status(400).json({ error: "license_key and hwid required" });
       return;
@@ -2015,16 +2154,31 @@ apiRouter.post("/v1/license/ping", async (req: Request, res: Response) => {
       return;
     }
 
+    const configResult = await db.execute(
+      "SELECT ed25519_private_key FROM admin_config LIMIT 1",
+    );
+    if (configResult.rows.length === 0) {
+      res.status(503).json({ error: SAFE_SERVER_ERROR });
+      return;
+    }
+
     await db.execute({
       sql: "UPDATE devices SET last_ping_at = ? WHERE license_id = ? AND hwid = ?",
       args: [now, license.id as string, hwid],
     });
 
-    res.json({
+    const signedData: Record<string, unknown> = {
       valid: true,
       status: "active",
       server_time: now,
-    });
+      nonce: typeof nonce === "string" ? nonce : "",
+    };
+    const signature = signPayload(
+      canonicalJson(signedData),
+      configResult.rows[0].ed25519_private_key as string,
+    );
+
+    res.json({ ...signedData, signature });
   } catch (error: any) {
     res.status(500).json({ error: SAFE_SERVER_ERROR });
   }

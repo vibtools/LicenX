@@ -28,6 +28,14 @@ before(async () => {
   await db.execute(
     "CREATE TABLE admin_config (id TEXT PRIMARY KEY, username TEXT, password_hash TEXT, jwt_secret TEXT, site_settings_json TEXT)",
   );
+  await db.execute(`
+    CREATE TABLE admin_login_attempts (
+      attempt_key TEXT PRIMARY KEY,
+      window_started_at INTEGER NOT NULL,
+      failed_attempts INTEGER NOT NULL DEFAULT 0,
+      blocked_until INTEGER NOT NULL DEFAULT 0
+    )
+  `);
 
   const app = express();
   app.use(express.json());

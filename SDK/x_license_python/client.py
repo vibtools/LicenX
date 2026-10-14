@@ -16,12 +16,12 @@ from .logout import LogoutManager
 class XLicenseClient:
     """
     Main SDK Client class to embed in any Python application.
-    
+
     Usage:
         from x_license_python import XLicenseClient
 
         client = XLicenseClient()
-        
+
         # 1. Try Auto Login first
         res = client.auto_login()
         if not res.success:
@@ -185,6 +185,9 @@ class XLicenseClient:
         if not key:
             return {"valid": False, "code": "NOT_AUTHENTICATED", "message": "No active session"}
         is_active, data = self.server.ping_heartbeat(key, self.get_hwid())
+        if not is_active:
+            reason = data.get("message") or data.get("code") or "Heartbeat failed"
+            self._handle_license_revoked(reason)
         return data
 
     # -------------------------------------------------------------
@@ -200,7 +203,7 @@ class XLicenseClient:
             self.logout_manager.logout(clear_saved_data=True)
         except Exception:
             pass
-        print(f"\n[VCON-SDK] CRITICAL: License session terminated by server! Reason: {reason}")
+        print(f"\n[VCON-SDK] CRITICAL: License session invalidated. Reason: {reason}")
         if self.on_license_revoked:
             self.on_license_revoked(reason)
 

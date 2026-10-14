@@ -31,12 +31,7 @@ after(async () => {
   db.close();
 });
 
-function bind(
-  hwid: string,
-  deviceLimit = 1,
-  reactivationLimitPolicy: "all-inactive" | "logged-out-only" = "all-inactive",
-  rejectBlocked = false,
-) {
+function bind(hwid: string, deviceLimit = 1, rejectBlocked = false) {
   const requestDb = createClient({ url: databaseUrl, timeout: 25 });
   return bindDeviceWithinLimit({
     db: requestDb,
@@ -48,7 +43,6 @@ function bind(
     ipAddress: "127.0.0.1",
     now: Date.now(),
     deviceLimit,
-    reactivationLimitPolicy,
     rejectBlocked,
   }).finally(() => requestDb.close());
 }
@@ -140,7 +134,7 @@ test("preserves Cloudflare blocked-device rejection", async () => {
           VALUES ('device-blocked', 'license-1', 'hwid-blocked', 1, 1, 'blocked')`,
   });
 
-  assert.deepEqual(await bind("hwid-blocked", 1, "logged-out-only", true), {
+  assert.deepEqual(await bind("hwid-blocked", 1, true), {
     status: "blocked",
   });
   const row = await db.execute(
@@ -149,7 +143,7 @@ test("preserves Cloudflare blocked-device rejection", async () => {
   assert.equal(row.rows[0]?.status, "blocked");
 });
 
-test("preserves Cloudflare limit handling for non-logged-out inactive states", async () => {
+test("rejects inactive-device reactivation when another device uses the slot", async () => {
   await db.execute({
     sql: `INSERT INTO devices (id, license_id, hwid, first_bound_at, last_ping_at, status)
           VALUES ('device-inactive', 'license-1', 'hwid-inactive', 1, 1, 'inactive')`,
@@ -159,13 +153,18 @@ test("preserves Cloudflare limit handling for non-logged-out inactive states", a
           VALUES ('device-active', 'license-1', 'hwid-active', 1, 1, 'active')`,
   });
 
-  const result = await bind("hwid-inactive", 1, "logged-out-only", true);
-  assert.equal(result.status, "bound");
+  const result = await bind("hwid-inactive");
+  assert.deepEqual(result, {
+    status: "limit",
+    existingDevice: true,
+    activeDevicesCount: 1,
+    deviceLimit: 1,
+  });
   const activeRows = await db.execute(
     "SELECT COUNT(*) AS active_count FROM devices WHERE license_id = ? AND status = 'active'",
     ["license-1"],
   );
-  assert.equal(Number(activeRows.rows[0]?.active_count), 2);
+  assert.equal(Number(activeRows.rows[0]?.active_count), 1);
 });
 
 test("preserves unlimited device binding", async () => {

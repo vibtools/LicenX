@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { LogIn, Loader2, Shield } from 'lucide-react';
-import { api, setAuthToken } from '../services/apiClient';
+import { api } from '../services/apiClient';
 
 interface LoginModalProps {
   onLoginSuccess: (username: string) => void;
@@ -24,7 +24,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
 
     try {
       const res = await api.login({ username, password });
-      setAuthToken(res.token);
       onLoginSuccess(res.username);
     } catch (err: any) {
       setError(err.message || 'Invalid username or password');

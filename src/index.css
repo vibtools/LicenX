@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: 'Segoe UI', sans-serif;
+  --font-mono: 'Segoe UI', sans-serif;
 }
 
 @layer base {
@@ -30,6 +30,10 @@
     color: #cbd5e1;
     font-weight: 600;
     letter-spacing: -0.01em;
+  }
+
+  code, kbd, samp, pre {
+    font-family: var(--font-mono);
   }
 
   /* Soft eye-friendly scrollbar */

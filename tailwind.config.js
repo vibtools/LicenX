@@ -5,24 +5,12 @@ export default {
     extend: {
       fontFamily: {
         sans: [
-          'Inter',
-          '-apple-system',
-          'BlinkMacSystemFont',
           '"Segoe UI"',
-          'Roboto',
-          'Oxygen',
-          'Ubuntu',
-          'Cantarell',
           'sans-serif',
         ],
         mono: [
-          '"JetBrains Mono"',
-          'ui-monospace',
-          'SFMono-Regular',
-          'Menlo',
-          'Monaco',
-          'Consolas',
-          'monospace',
+          '"Segoe UI"',
+          'sans-serif',
         ],
       },
     },

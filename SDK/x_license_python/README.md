@@ -18,7 +18,7 @@ Production-grade, modular client protection and hardware locking SDK for Python 
 | **`server.py`**      | Transport and protocol engine. Supports `requests` with native `urllib` standard-library fallback. Requires `cryptography` for RSA and Ed25519 signature verification, pings heartbeat, and delivers unbind notifications. |
 | **`login.py`**       | Handles strict online validation and attempts saved-session auto-login. Persistent key storage is currently disabled. Validates SSL, signatures, app scope, device limit, and active status. Disallows offline logins.     |
 | **`logout.py`**      | Manages manual logout and process exit hooks (`atexit`, `SIGINT`, `SIGTERM`) while preserving existing host signal handlers. Instantly notifies the server to mark device as `logged_out` and release the hardware slot.   |
-| **`storage.py`**     | Disables persistent license-key storage and rejects legacy temp-file sessions; runs a low-overhead background daemon thread every 20 minutes to verify server state.                                                       |
+| **`storage.py`**     | Disables persistent license-key storage and rejects legacy temp-file sessions; runs a background heartbeat and invalidates local access immediately when its signed challenge fails.                                       |
 | **`offline.py`**     | Enforces online-only security policies and detects system clock manipulation / rollback attacks.                                                                                                                           |
 | **`client.py`**      | High-level facade (`XLicenseClient`) exposing clean, intuitive methods for desktop and CLI Python applications.                                                                                                            |
 | **`example_app.py`** | Complete lifecycle demonstration application ready to test and run.                                                                                                                                                        |
@@ -29,7 +29,7 @@ Production-grade, modular client protection and hardware locking SDK for Python 
 
 ### 1. Requirements
 
-The SDK supports **Python 3.8+**. Install its requirements before use; `cryptography` is required for all license signature verification. HTTP transport can use optional `requests` or the standard-library `urllib` fallback.
+The SDK declares compatibility with **Python 3.8+**. Its tag-release CI tests every minor from Python 3.8 through 3.15 on GitHub-hosted Linux (Ubuntu), Windows, and Intel macOS runners. This is configured coverage, not evidence of a passing hosted run; versions newer than 3.15 and Apple Silicon are not covered by this matrix. Install its requirements before use; `cryptography` is required for all license signature verification. HTTP transport can use optional `requests` or the standard-library `urllib` fallback.
 
 ```bash
 pip install -r requirements.txt
@@ -44,7 +44,7 @@ Download `<app_name>_vcon_config.json` from the Admin Panel (**Applications** ta
 
 ```json
 {
-  "server_url": "http://localhost:3000",
+  "server_url": "https://your-license-server.example",
   "app_name": "vcon_default",
   "display_name": "VCON Default Suite",
   "min_version": "1.0.0",
@@ -53,6 +53,8 @@ Download `<app_name>_vcon_config.json` from the Admin Panel (**Applications** ta
 ```
 
 `public_key_pem` is required for license authorization. Use the key in the Admin Panel's downloaded client config and provision that file/key through a trusted channel. Do not bootstrap trust by copying a key from an unauthenticated server response or `/v1/public-key`; the SDK ignores keys included in validation responses and rejects authorization when no key is configured.
+
+Remote server URLs must use HTTPS. HTTP is permitted only for an explicitly configured localhost or loopback IP endpoint during local development/testing (for example, `http://127.0.0.1:3000`). The SDK rejects remote HTTP URLs before sending license credentials and keeps normal TLS certificate verification enabled for HTTPS.
 
 **Existing-client migration:** Before upgrading deployed clients, ensure their config contains the intended server `public_key_pem`. A missing/empty key now causes validation to fail closed. For key rotation, distribute and install the new trusted public key before switching the server to sign with its matching private key; the SDK does not automatically trust a newly returned key.
 
@@ -112,4 +114,7 @@ else:
 
 5. **Background Heartbeat Worker (20-Minute Cycle)**:
    - Runs as a low-priority daemon thread with minimal CPU/RAM footprint.
-   - If an admin revokes, suspends, or unbinds a device from the control panel, the client detects the termination on the next heartbeat, triggers `on_license_revoked`, and terminates premium features.
+   - Each success is signed by the server and bound to a fresh client nonce using the configured `public_key_pem` trust anchor.
+   - A transport error, non-success response, malformed payload, missing/invalid signature, or nonce mismatch fails closed: local access is invalidated immediately and there is no offline grace.
+   - Server revocation, suspension, or device unbind also invalidates local access and invokes the legacy `on_license_revoked` callback. The callback may run for connectivity or signature failures, not only an administrator revocation.
+   - `client.ping()` uses the same signed challenge and invalidates the active client on failure. The initial validation payload's legacy grace field does not grant Python SDK heartbeat grace.

@@ -12,18 +12,10 @@ import {
   ValidationLog,
 } from "../types";
 
-const TOKEN_KEY = "vcon_admin_token";
-
-export function getAuthToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setAuthToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
 export function clearAuthToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  if (typeof localStorage !== "undefined") {
+    localStorage.removeItem("vcon_admin_token");
+  }
   invalidateCache();
 }
 
@@ -33,6 +25,118 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 const clientCache = new Map<string, CacheEntry<any>>();
+let csrfTokenPromise: Promise<string> | null = null;
+const API_REQUEST_TIMEOUT_MS = 30_000;
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+function safeErrorMessage(status: number): string {
+  if (status === 0) return "Unable to connect. Check your connection and try again.";
+  if (status === 400 || status === 422) {
+    return "The request could not be completed. Check the entered values and try again.";
+  }
+  if (status === 401) return "Authentication failed or your session has expired.";
+  if (status === 403) return "You do not have permission to perform this action.";
+  if (status === 404) return "The requested resource could not be found.";
+  if (status === 409) return "The request conflicts with the current state.";
+  if (status === 429) return "Too many requests. Please wait and try again.";
+  if (status >= 500) return "The server could not complete the request. Please try again.";
+  return "The request could not be completed. Please try again.";
+}
+
+function safeErrorCode(data: unknown, fallback: string): string {
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "code" in data &&
+    typeof data.code === "string" &&
+    /^[A-Z0-9_]{1,64}$/.test(data.code)
+  ) {
+    return data.code;
+  }
+  return fallback;
+}
+
+async function fetchWithTimeout<T>(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  readBody: (response: Response) => Promise<T>,
+): Promise<{ response: Response; body: T }> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, API_REQUEST_TIMEOUT_MS);
+  const externalSignal = init.signal;
+  const abortFromCaller = () => controller.abort(externalSignal?.reason);
+
+  if (externalSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    return { response, body: await readBody(response) };
+  } catch {
+    if (timedOut) {
+      throw new ApiError("The request timed out. Please try again.", 0, "TIMEOUT");
+    }
+    if (externalSignal?.aborted) {
+      throw new ApiError("The request was cancelled.", 0, "REQUEST_ABORTED");
+    }
+    throw new ApiError(safeErrorMessage(0), 0, "NETWORK_ERROR");
+  } finally {
+    clearTimeout(timeoutId);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+async function getCsrfToken(): Promise<string> {
+  if (!csrfTokenPromise) {
+    csrfTokenPromise = fetchWithTimeout("/api/auth/csrf", {
+      credentials: "same-origin",
+    }, (response) => response.text())
+      .then(({ response: res, body }) => {
+        let data: unknown;
+        try {
+          data = JSON.parse(body);
+        } catch {
+          throw new ApiError(safeErrorMessage(res.status), res.status, "INVALID_RESPONSE");
+        }
+        if (
+          !res.ok ||
+          typeof data !== "object" ||
+          data === null ||
+          !("csrfToken" in data) ||
+          typeof data.csrfToken !== "string"
+        ) {
+          throw new ApiError(
+            safeErrorMessage(res.status),
+            res.status,
+            safeErrorCode(data, "CSRF_INITIALIZATION_FAILED"),
+          );
+        }
+        return data.csrfToken;
+      })
+      .catch((error: unknown) => {
+        csrfTokenPromise = null;
+        throw error;
+      });
+  }
+  return csrfTokenPromise;
+}
 
 export function getCached<T>(key: string, maxAgeMs: number): T | null {
   const entry = clientCache.get(key);
@@ -64,26 +168,45 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = getAuthToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(options.headers as Record<string, string>),
-  };
-
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  const headers = new Headers(options.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const method = (options.method || "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers.set("X-CSRF-Token", await getCsrfToken());
   }
 
-  const res = await fetch(endpoint, {
+  const { response: res, body } = await fetchWithTimeout(endpoint, {
     ...options,
+    credentials: "same-origin",
     headers,
-  });
+  }, (response) => response.text());
 
-  const data = await res.json().catch(() => ({}));
+  let data: unknown;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    throw new ApiError(
+      "The server returned an invalid response. Please try again.",
+      res.status,
+      "INVALID_RESPONSE",
+    );
+  }
 
   if (!res.ok) {
-    throw new Error(
-      data.error || data.message || `Request failed with status ${res.status}`,
+    throw new ApiError(
+      safeErrorMessage(res.status),
+      res.status,
+      safeErrorCode(data, `HTTP_${res.status}`),
+    );
+  }
+
+  if (typeof data !== "object" || data === null) {
+    throw new ApiError(
+      "The server returned an invalid response. Please try again.",
+      res.status,
+      "INVALID_RESPONSE",
     );
   }
 
@@ -113,7 +236,6 @@ export const api = {
     invalidateCache();
     return request<{
       success: boolean;
-      token: string;
       username: string;
       publicKeyPem: string;
     }>("/api/setup/init", {
@@ -123,13 +245,20 @@ export const api = {
   },
   login: async (data: { username: string; password: string }) => {
     invalidateCache();
-    return request<{ success: boolean; token: string; username: string }>(
+    return request<{ success: boolean; username: string }>(
       "/api/auth/login",
       {
         method: "POST",
         body: JSON.stringify(data),
       },
     );
+  },
+  logout: async () => {
+    invalidateCache();
+    await request<{ success: boolean }>("/api/auth/logout", {
+      method: "POST",
+      body: "{}",
+    });
   },
   getMe: async (force = false) => {
     const key = "auth_me";
@@ -157,7 +286,7 @@ export const api = {
     newPassword?: string;
   }) => {
     invalidateCache();
-    return request<{ success: boolean; token: string; username: string }>(
+    return request<{ success: boolean; username: string }>(
       "/api/auth/update-credentials",
       {
         method: "POST",
@@ -294,12 +423,14 @@ export const api = {
     );
   },
   downloadAppConfig: async (id: string, appSlug: string) => {
-    const token = getAuthToken();
-    const res = await fetch(`/api/apps/${id}/config`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) throw new Error("Failed to download config");
-    const blob = await res.blob();
+    const { response: res, body: blob } = await fetchWithTimeout(
+      `/api/apps/${id}/config`,
+      { credentials: "same-origin" },
+      (response) => response.blob(),
+    );
+    if (!res.ok) {
+      throw new ApiError(safeErrorMessage(res.status), res.status, `HTTP_${res.status}`);
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -588,13 +719,32 @@ export const api = {
     device_name?: string;
     os_info?: string;
   }) =>
-    fetch("/api/v1/license/validate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...data, client_time: Date.now() }),
-    }).then(async (res) => {
-      const body = await res.json();
-      return { status: res.status, ok: res.ok, data: body };
+    fetchWithTimeout(
+      "/api/v1/license/validate",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...data, client_time: Date.now() }),
+      },
+      (response) => response.text(),
+    ).then(({ response: res, body }) => {
+      let responseData: unknown;
+      try {
+        responseData = JSON.parse(body);
+      } catch {
+        throw new ApiError(
+          "The server returned an invalid response. Please try again.",
+          res.status,
+          "INVALID_RESPONSE",
+        );
+      }
+      if (!res.ok) {
+        responseData = {
+          error: safeErrorMessage(res.status),
+          code: safeErrorCode(responseData, `HTTP_${res.status}`),
+        };
+      }
+      return { status: res.status, ok: res.ok, data: responseData };
     }),
   getPublicKey: () =>
     request<{ algorithm: string; publicKeyPem: string; serverTime: number }>(
@@ -603,9 +753,14 @@ export const api = {
 
   // Python SDK Download
   downloadPythonSdk: async () => {
-    const res = await fetch("/api/sdk/download/python");
-    if (!res.ok) throw new Error("Failed to download Python SDK");
-    const blob = await res.blob();
+    const { response: res, body: blob } = await fetchWithTimeout(
+      "/api/sdk/download/python",
+      {},
+      (response) => response.blob(),
+    );
+    if (!res.ok) {
+      throw new ApiError(safeErrorMessage(res.status), res.status, `HTTP_${res.status}`);
+    }
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

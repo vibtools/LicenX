@@ -3,12 +3,10 @@ import {
   UserCheck,
   KeyRound,
   Lock,
-  Copy,
-  Check,
   Loader2,
   FileCode,
 } from 'lucide-react';
-import { api, getAuthToken } from '../services/apiClient';
+import { api } from '../services/apiClient';
 
 interface ProfileTabProps {
   username: string;
@@ -22,9 +20,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ username, onUsernameUpda
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ success: boolean; text: string } | null>(null);
-  const [copiedToken, setCopiedToken] = useState(false);
-
-  const token = getAuthToken() || '';
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,8 +28,8 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ username, onUsernameUpda
       return;
     }
 
-    if (newPassword && newPassword.length < 6) {
-      setMessage({ success: false, text: 'New password must be at least 6 characters' });
+    if (newPassword && newPassword.length < 12) {
+      setMessage({ success: false, text: 'New password must be at least 12 characters' });
       return;
     }
 
@@ -67,12 +62,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ username, onUsernameUpda
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleCopyToken = () => {
-    navigator.clipboard.writeText(token);
-    setCopiedToken(true);
-    setTimeout(() => setCopiedToken(false), 2000);
   };
 
   return (
@@ -193,27 +182,23 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ username, onUsernameUpda
 
       {/* Bearer Token for CLI / Automation */}
       <div className="p-3.5 rounded bg-slate-900/40 border border-slate-800 space-y-2">
+        <div className="flex items-center gap-2 pb-2 border-b border-slate-800/80">
+          <KeyRound className="w-4 h-4 text-slate-400" />
+          <span className="font-medium text-slate-300 uppercase tracking-wider">CLI & Automation Access</span>
+        </div>
+        <p className="text-[11px] text-slate-400">
+          Browser sessions are protected by an HttpOnly cookie and cannot be copied here.
+          Create a dedicated Admin API key in Admin APIs for CLI or automation use.
+        </p>
+      </div>
+      <div className="hidden">
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
           <div className="flex items-center gap-2">
             <FileCode className="w-4 h-4 text-slate-400" />
             <span className="font-medium text-slate-300 uppercase tracking-wider">Admin API Bearer Token</span>
           </div>
 
-          <button
-            onClick={handleCopyToken}
-            className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            {copiedToken ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-            {copiedToken ? 'Copied' : 'Copy Token'}
-          </button>
         </div>
-
-        <input
-          type="text"
-          readOnly
-          value={token}
-          className="w-full p-2 bg-slate-950 border border-slate-800 rounded text-slate-400 select-all font-mono text-[10px] focus:outline-none"
-        />
       </div>
     </div>
   );

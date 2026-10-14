@@ -83,9 +83,14 @@ class BackgroundLicenseWorker:
         """Stops background thread safely"""
         self._running = False
         self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
+        worker_thread = self._thread
         self._thread = None
+        if (
+            worker_thread
+            and worker_thread.is_alive()
+            and worker_thread is not threading.current_thread()
+        ):
+            worker_thread.join(timeout=1.0)
 
     def _worker_loop(self) -> None:
         """Periodic background heartbeat runner (RAM & CPU friendly)"""
@@ -103,20 +108,32 @@ class BackgroundLicenseWorker:
                     self._current_license_key,
                     self._current_hwid,
                 )
+            except Exception:
+                is_valid = False
+                data = {
+                    "message": "Heartbeat could not be verified; access is denied",
+                    "code": "HEARTBEAT_UNAVAILABLE",
+                }
 
-                if is_valid:
-                    if self.on_heartbeat_success:
+            if is_valid:
+                if self.on_heartbeat_success:
+                    try:
                         self.on_heartbeat_success(data)
-                else:
-                    # License was revoked, expired, or device was unbound by admin!
-                    reason = data.get("message") or data.get("code") or "License validation failed on server"
-                    self.clear_session()
-                    if self.on_invalidated:
-                        self.on_invalidated(reason)
-                    break
-            except Exception as e:
-                # Network glitch, retry next interval
-                print(f"[VCON-SDK] Background ping warning: {e}")
+                    except Exception as error:
+                        print(f"[VCON-SDK] Heartbeat success callback warning: {error}")
+                continue
+
+            reason = (
+                data.get("message")
+                or data.get("code")
+                or "Heartbeat could not be verified; access is denied"
+            )
+            self.clear_session()
+            self._running = False
+            self._stop_event.set()
+            if self.on_invalidated:
+                self.on_invalidated(reason)
+            break
 
 
 # Alias for backward-compatibility and clean imports

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldCheck, KeyRound, Loader2 } from 'lucide-react';
-import { api, setAuthToken } from '../services/apiClient';
+import { api } from '../services/apiClient';
 
 interface SetupModalProps {
   hasTursoEnv: boolean;
@@ -27,8 +27,8 @@ export const SetupModal: React.FC<SetupModalProps> = ({ hasTursoEnv, onCompleted
       setError('Please fill in required fields');
       return;
     }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (password.length < 12) {
+      setError('Password must be at least 12 characters');
       return;
     }
     if (password !== confirmPassword) {
@@ -50,7 +50,6 @@ export const SetupModal: React.FC<SetupModalProps> = ({ hasTursoEnv, onCompleted
       }
 
       const res = await api.initSetup(payload);
-      setAuthToken(res.token);
       onCompleted(res.username);
     } catch (err: any) {
       setError(err.message || 'Setup initialization failed');
@@ -100,7 +99,8 @@ export const SetupModal: React.FC<SetupModalProps> = ({ hasTursoEnv, onCompleted
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="At least 12 characters"
+              minLength={12}
               className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none font-mono"
               required
             />
@@ -112,7 +112,8 @@ export const SetupModal: React.FC<SetupModalProps> = ({ hasTursoEnv, onCompleted
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="Repeat your password"
+              minLength={12}
               className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:border-indigo-500/80 focus:outline-none font-mono"
               required
             />

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, getAuthToken, clearAuthToken } from './services/apiClient';
+import { api, clearAuthToken } from './services/apiClient';
 import { SetupStatus, License, ActiveTab, SystemStats } from './types';
 import { Sidebar } from './components/Sidebar';
 import { HeaderBar } from './components/HeaderBar';
@@ -225,32 +225,27 @@ export default function App() {
       if (isInitial) {
         setLoading(true);
       }
-      const token = getAuthToken();
+      clearAuthToken();
+      const status = await api.getSetupStatus(true);
+      setSetupStatus(status);
 
-      if (token) {
-        // Parallel execution on boot for blazing fast initial load
-        const [statusRes, meRes, statsRes] = await Promise.all([
-          api.getSetupStatus().catch(() => null),
-          api.getMe().catch(() => null),
-          api.getStats().catch(() => null),
-        ]);
+      if (!status.initialized) {
+        setAuthenticated(false);
+        return;
+      }
 
-        if (statusRes) {
-          setSetupStatus(statusRes);
-        }
+      const [meRes, statsRes] = await Promise.all([
+        api.getMe(true).catch(() => null),
+        api.getStats(true).catch(() => null),
+      ]);
 
-        if (meRes && meRes.authenticated) {
-          setAuthenticated(true);
-          setUsername(meRes.username);
-          setPublicKeyPem(meRes.publicKeyPem);
-          if (statsRes) setStats(statsRes);
-        } else {
-          clearAuthToken();
-          setAuthenticated(false);
-        }
+      if (meRes?.authenticated) {
+        setAuthenticated(true);
+        setUsername(meRes.username);
+        setPublicKeyPem(meRes.publicKeyPem);
+        if (statsRes) setStats(statsRes);
       } else {
-        const status = await api.getSetupStatus();
-        setSetupStatus(status);
+        setAuthenticated(false);
       }
     } catch (err) {
       console.error('Failed to initialize app', err);
@@ -271,7 +266,14 @@ export default function App() {
     }
   }, [refreshKey]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch (error) {
+      console.error('Could not end the admin session', error);
+      window.alert('Could not end the admin session. Please try again.');
+      return;
+    }
     clearAuthToken();
     setAuthenticated(false);
     setUsername('');

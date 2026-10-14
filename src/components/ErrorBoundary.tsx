@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { Component, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home, ShieldAlert } from 'lucide-react';
 
 interface Props {
@@ -7,33 +7,28 @@ interface Props {
 
 interface State {
   hasError: boolean;
-  error: Error | null;
-  errorInfo: ErrorInfo | null;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
-    error: null,
-    errorInfo: null,
   };
 
-  public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error, errorInfo: null };
+  public static getDerivedStateFromError(): State {
+    return { hasError: true };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Unhandled Application Error caught by ErrorBoundary:', error, errorInfo);
-    this.setState({ error, errorInfo });
+  public componentDidCatch() {
+    console.error('Unhandled Application Error caught by ErrorBoundary');
   }
 
   private handleReset = () => {
-    this.setState({ hasError: false, error: null, errorInfo: null });
+    this.setState({ hasError: false });
     window.location.reload();
   };
 
   private handleGoHome = () => {
-    this.setState({ hasError: false, error: null, errorInfo: null });
+    this.setState({ hasError: false });
     window.location.href = '/vcon';
   };
 
@@ -52,16 +47,15 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
             </div>
 
-            {this.state.error && (
-              <div className="p-3 rounded-lg bg-slate-950/80 border border-rose-950/50 text-rose-300 font-mono text-xs overflow-x-auto max-h-36">
-                <div className="font-semibold text-rose-400 mb-1">
-                  {this.state.error.name}: {this.state.error.message}
-                </div>
-                {this.state.error.stack && (
-                  <pre className="text-[11px] text-slate-500 whitespace-pre-wrap">
-                    {this.state.error.stack.split('\n').slice(0, 4).join('\n')}
-                  </pre>
-                )}
+            {this.state.hasError && (
+              <div className="p-3 rounded-lg bg-slate-950/80 border border-rose-950/50 text-rose-300 text-xs">
+                <p className="font-semibold text-rose-400 mb-1">
+                  Something went wrong while displaying the dashboard.
+                </p>
+                <p className="text-slate-400">
+                  Reload the page or return to admin login. If the problem
+                  continues, contact your administrator.
+                </p>
               </div>
             )}
 

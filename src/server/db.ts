@@ -184,6 +184,18 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_user_control_pin_attempts_window
       ON user_control_pin_attempts(window_started_at)
     `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS admin_login_attempts (
+        attempt_key TEXT PRIMARY KEY,
+        window_started_at INTEGER NOT NULL,
+        failed_attempts INTEGER NOT NULL DEFAULT 0,
+        blocked_until INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_admin_login_attempts_expiry
+      ON admin_login_attempts(blocked_until, window_started_at)
+    `);
 
     // Admin API Keys table (External Store & REST automation)
     await db.execute(`

@@ -80,8 +80,9 @@ VCON লাইসেন্সিং সিস্টেম ক্লায়ে�
 
 ### এনভায়রনমেন্ট রিকোয়ারমেন্ট:
 
-- **পাইথন ভার্সন:** ৩.৮ বা তার পরবর্তী (Python 3.8, 3.9, 3.10, 3.11, 3.12+)
-- **অপারেটিং সিস্টেম:** Windows 10/11, macOS, Linux (যেকোনো ডিস্ট্রো)
+- **ঘোষিত Python compatibility:** Python 3.8+
+- **Release CI matrix:** GitHub-hosted Ubuntu, Windows ও Intel macOS runner-এ Python 3.8–3.15 পরীক্ষা করা হবে। এটি কনফিগার করা coverage—সফল hosted run-এর প্রমাণ নয়। Python 3.15-এর পরের সংস্করণ, Apple Silicon এবং Ubuntu ছাড়া অন্য Linux distro এই matrix-এ নেই।
+- **অপারেটিং সিস্টেম:** Windows, macOS ও Linux। Release CI কেবল উপরে উল্লেখিত runner environment পরীক্ষা করে; প্রতিটি OS release, architecture বা Linux distro certify করে না।
 
 ### Dependency
 
@@ -119,6 +120,8 @@ pip install -r requirements.txt
 ```
 
 `public_key_pem` লাইসেন্স authorization-এর জন্য বাধ্যতামূলক trust anchor; এটি optional convenience নয়। Admin Panel থেকে download করা application config-এর public key trusted channel দিয়ে client-এ provision করুন। Validation response বা unauthenticated `/v1/public-key` response থেকে প্রথম trusted key নেবেন না। Field অনুপস্থিত বা খালি থাকলে SDK license validation reject করবে।
+
+Remote `server_url` অবশ্যই HTTPS হতে হবে। Local development/testing-এর জন্য explicit localhost বা loopback IP endpoint-এ শুধু HTTP ব্যবহার করা যাবে (যেমন, `http://127.0.0.1:3000`)। License credential পাঠানোর আগে SDK remote HTTP URL reject করে এবং HTTPS-এর standard TLS certificate verification বন্ধ করে না।
 
 **আগের client migration:** Deployed client upgrade করার আগে config-এ সঠিক server public key দিন। Key rotation করলে server নতুন private key দিয়ে signing শুরু করার আগে matching public key client-দের কাছে distribute ও install করুন। SDK trust-on-first-use বা স্বয়ংক্রিয় key adoption করে না।
 
@@ -240,7 +243,9 @@ Login-এ device binding-এর জন্য প্রয়োজনীয় HWID �
 
 - এটি প্রতি ২০ মিনিটে একবার সার্ভারকে পিং করে চেক করে লাইসেন্সটি এখনো বৈধ কি না।
 - ইউআই থ্রেড বা মূল অ্যাপ্লিকেশনের পারফরম্যান্সে কোনো প্রভাব ফেলে না।
-- আপনি যদি VCON Admin Panel থেকে লাইসেন্স সাসপেন্ড বা বাতিল করেন, পরবর্তী পিং-এ ক্লায়েন্ট তা শনাক্ত করবে এবং `on_license_revoked` কলব্যাক এক্সিকিউট করবে।
+- প্রতিটি heartbeat-এ নতুন random nonce পাঠানো হয়। সার্ভার response sign করে; SDK configured `public_key_pem` দিয়ে signature যাচাই করে এবং nonce মিলিয়ে দেখে।
+- **Fail-closed policy:** কোনো offline grace নেই। Timeout, network error, non-success/malformed response, signature failure বা nonce mismatch হলে local access সঙ্গে সঙ্গে invalid হবে।
+- সার্ভার revocation/unbind এবং authenticate করা যায়নি এমন যেকোনো heartbeat-এ legacy `on_license_revoked` callback চলে; callback-টি শুধু admin revocation-এর জন্য নয়, connectivity/signature failure-এও চলতে পারে।
 
 ```python
 def handle_revocation(reason: str):
@@ -250,6 +255,9 @@ def handle_revocation(reason: str):
 
 client = XLicenseClient(on_license_revoked=handle_revocation)
 ```
+
+হার্টবিট ব্যর্থতার নীতি:
+ম্যানুয়াল `client.ping()`-ও signed challenge যাচাই করে; ব্যর্থ হলে active SDK session invalid করে। Initial validation response-এর legacy grace field Python SDK-কে heartbeat offline grace দেয় না।
 
 যেকোনো সময় ম্যানুয়ালি পিং চেক করতে:
 

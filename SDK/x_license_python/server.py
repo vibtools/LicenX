@@ -7,8 +7,15 @@ Ed25519 cryptographic validation, heartbeat pings, and remote unbind / logout no
 import time
 import json
 import base64
+import ipaddress
+import re
 import socket
+import secrets
+import ssl
+import urllib.error
+import urllib.request
 from typing import Dict, Any, Tuple, Optional
+from urllib.parse import urlsplit
 from .config import SDKConfig
 
 # Graceful HTTP Transport import (requests preferred, urllib built-in fallback)
@@ -17,9 +24,6 @@ try:
     HAS_REQUESTS = True
 except ImportError:
     HAS_REQUESTS = False
-    import urllib.request
-    import urllib.error
-    import ssl
 
 # Signature verification fails closed when the required cryptography package is unavailable.
 try:
@@ -35,9 +39,45 @@ class ServerCommunicator:
 
     def _build_url(self, endpoint: str) -> str:
         """Constructs clean URL handling trailing slashes and redundant api prefixes"""
-        base = (self.config.server_url or "http://localhost:3000").rstrip("/")
+        base = self.config.server_url
+        if not isinstance(base, str) or not base or base != base.strip():
+            raise ValueError("server_url must be a valid absolute HTTP(S) URL")
+
+        base = base.rstrip("/")
         if base.endswith("/api"):
             base = base[:-4]
+
+        try:
+            parsed_url = urlsplit(base)
+            hostname = parsed_url.hostname
+            _ = parsed_url.port
+        except ValueError as error:
+            raise ValueError("server_url must be a valid absolute HTTP(S) URL") from error
+
+        if (
+            parsed_url.scheme not in ("http", "https")
+            or not parsed_url.netloc
+            or not hostname
+            or any(character.isspace() for character in base)
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or "?" in base
+            or "#" in base
+        ):
+            raise ValueError("server_url must be a valid absolute HTTP(S) URL")
+
+        is_loopback = hostname.rstrip(".").lower() == "localhost"
+        if not is_loopback:
+            try:
+                is_loopback = ipaddress.ip_address(hostname).is_loopback
+            except ValueError:
+                is_loopback = False
+
+        if parsed_url.scheme != "https" and not is_loopback:
+            raise ValueError(
+                "server_url must use HTTPS unless it targets localhost or a loopback IP"
+            )
+
         endpoint = endpoint.lstrip("/")
         return f"{base}/{endpoint}"
 
@@ -81,8 +121,33 @@ class ServerCommunicator:
                 pub_key.verify(signature_bytes, canonical_str.encode("utf-8"))
             return True
         except Exception as e:
-            print(f"[VCON-SDK] Cryptographic signature verification failed: {e}")
+            print("[VCON-SDK] Cryptographic signature verification failed")
             return False
+
+    @staticmethod
+    def _safe_response(status_code: int, data: Any) -> Dict[str, Any]:
+        if 200 <= status_code < 300 and isinstance(data, dict):
+            if any(
+                isinstance(data.get(key), str)
+                for key in ("error", "message", "detail")
+            ):
+                return {
+                    **data,
+                    "error": "License server reported a validation error",
+                }
+            return data
+
+        code = data.get("code") if isinstance(data, dict) else None
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Z0-9_]{1,64}", code):
+            code = f"HTTP_{status_code}" if status_code >= 400 else "INVALID_RESPONSE"
+        return {
+            "error": (
+                f"License server rejected the request (HTTP {status_code})"
+                if status_code >= 400
+                else "Invalid response from license server"
+            ),
+            "code": code,
+        }
 
     def _http_post(self, url: str, json_data: Dict[str, Any], timeout: int) -> Tuple[int, Dict[str, Any]]:
         """
@@ -103,16 +168,16 @@ class ServerCommunicator:
                 try:
                     data = resp.json()
                 except Exception:
-                    data = {"error": resp.text, "code": "INVALID_RESPONSE"}
-                return resp.status_code, data
-            except requests.exceptions.SSLError as e:
-                return 495, {"error": f"SSL Handshake failed: {e}", "code": "SSL_ERROR"}
-            except requests.exceptions.ConnectionError as e:
-                return 503, {"error": f"Cannot connect to license server: {e}", "code": "SERVER_UNREACHABLE"}
+                    data = None
+                return resp.status_code, self._safe_response(resp.status_code, data)
+            except requests.exceptions.SSLError:
+                return 495, {"error": "SSL handshake with license server failed", "code": "SSL_ERROR"}
+            except requests.exceptions.ConnectionError:
+                return 503, {"error": "Cannot connect to license server", "code": "SERVER_UNREACHABLE"}
             except requests.exceptions.Timeout:
                 return 408, {"error": "Connection to license server timed out", "code": "TIMEOUT"}
-            except Exception as e:
-                return 500, {"error": str(e), "code": "REQUEST_ERROR"}
+            except Exception:
+                return 500, {"error": "License server request failed", "code": "REQUEST_ERROR"}
 
         # Native Python standard library fallback
         post_bytes = json.dumps(json_data).encode("utf-8")
@@ -133,22 +198,21 @@ class ServerCommunicator:
                 try:
                     data = json.loads(raw_body)
                 except Exception:
-                    data = {"error": raw_body, "code": "INVALID_RESPONSE"}
-                return status_code, data
+                    data = None
+                return status_code, self._safe_response(status_code, data)
         except urllib.error.HTTPError as e:
             status_code = e.code
-            raw_body = e.read().decode("utf-8")
             try:
-                data = json.loads(raw_body)
+                data = json.loads(e.read().decode("utf-8"))
             except Exception:
-                data = {"error": raw_body, "code": "HTTP_ERROR"}
-            return status_code, data
-        except urllib.error.URLError as e:
-            return 503, {"error": f"Cannot connect to license server: {e.reason}", "code": "SERVER_UNREACHABLE"}
+                data = None
+            return status_code, self._safe_response(status_code, data)
+        except urllib.error.URLError:
+            return 503, {"error": "Cannot connect to license server", "code": "SERVER_UNREACHABLE"}
         except socket.timeout:
             return 408, {"error": "Connection to license server timed out", "code": "TIMEOUT"}
-        except Exception as e:
-            return 500, {"error": str(e), "code": "UNKNOWN_ERROR"}
+        except Exception:
+            return 500, {"error": "License server request failed", "code": "UNKNOWN_ERROR"}
 
     def _http_get(self, url: str, timeout: int) -> Tuple[int, Dict[str, Any]]:
         """
@@ -167,16 +231,16 @@ class ServerCommunicator:
                 try:
                     data = resp.json()
                 except Exception:
-                    data = {"error": resp.text, "code": "INVALID_RESPONSE"}
-                return resp.status_code, data
-            except requests.exceptions.SSLError as e:
-                return 495, {"error": f"SSL Handshake failed: {e}", "code": "SSL_ERROR"}
-            except requests.exceptions.ConnectionError as e:
-                return 503, {"error": f"Cannot connect to license server: {e}", "code": "SERVER_UNREACHABLE"}
+                    data = None
+                return resp.status_code, self._safe_response(resp.status_code, data)
+            except requests.exceptions.SSLError:
+                return 495, {"error": "SSL handshake with license server failed", "code": "SSL_ERROR"}
+            except requests.exceptions.ConnectionError:
+                return 503, {"error": "Cannot connect to license server", "code": "SERVER_UNREACHABLE"}
             except requests.exceptions.Timeout:
                 return 408, {"error": "Connection to license server timed out", "code": "TIMEOUT"}
-            except Exception as e:
-                return 500, {"error": str(e), "code": "REQUEST_ERROR"}
+            except Exception:
+                return 500, {"error": "License server request failed", "code": "REQUEST_ERROR"}
 
         # Native Python standard library fallback
         req = urllib.request.Request(
@@ -194,22 +258,21 @@ class ServerCommunicator:
                 try:
                     data = json.loads(raw_body)
                 except Exception:
-                    data = {"error": raw_body, "code": "INVALID_RESPONSE"}
-                return status_code, data
+                    data = None
+                return status_code, self._safe_response(status_code, data)
         except urllib.error.HTTPError as e:
             status_code = e.code
-            raw_body = e.read().decode("utf-8")
             try:
-                data = json.loads(raw_body)
+                data = json.loads(e.read().decode("utf-8"))
             except Exception:
-                data = {"error": raw_body, "code": "HTTP_ERROR"}
-            return status_code, data
-        except urllib.error.URLError as e:
-            return 503, {"error": f"Cannot connect to license server: {e.reason}", "code": "SERVER_UNREACHABLE"}
+                data = None
+            return status_code, self._safe_response(status_code, data)
+        except urllib.error.URLError:
+            return 503, {"error": "Cannot connect to license server", "code": "SERVER_UNREACHABLE"}
         except socket.timeout:
             return 408, {"error": "Connection to license server timed out", "code": "TIMEOUT"}
-        except Exception as e:
-            return 500, {"error": str(e), "code": "UNKNOWN_ERROR"}
+        except Exception:
+            return 500, {"error": "License server request failed", "code": "UNKNOWN_ERROR"}
 
     def validate_license(
         self,
@@ -252,18 +315,36 @@ class ServerCommunicator:
     def ping_heartbeat(self, license_key: str, hwid: str) -> Tuple[bool, Dict[str, Any]]:
         """
         Sends heartbeat ping to server.
-        Returns (active, payload). If license was revoked or device unlinked, active will be False.
+        Verifies the signed response and its one-time challenge before accepting it.
+        Returns (active, payload); any unverifiable response is rejected.
         """
         url = self._build_url("api/v1/license/ping")
+        nonce = secrets.token_urlsafe(32)
         body = {
             "license_key": license_key.strip().upper(),
             "hwid": hwid,
             "app_name": self.config.app_name,
             "client_time": int(time.time() * 1000),
+            "nonce": nonce,
         }
 
         status_code, data = self._http_post(url, body, 10)
+        if not isinstance(data, dict):
+            return False, {"error": "Invalid heartbeat response", "code": "INVALID_RESPONSE"}
+
         if status_code == 200 and data.get("valid") is True:
+            signature = data.pop("signature", None)
+            data.pop("public_key", None)
+            if (
+                data.get("status") != "active"
+                or data.get("nonce") != nonce
+                or not signature
+                or not self.verify_signature(data, signature)
+            ):
+                return False, {
+                    "error": "Heartbeat signature or challenge verification failed",
+                    "code": "HEARTBEAT_SIGNATURE_FAILED",
+                }
             return True, data
         return False, data
 

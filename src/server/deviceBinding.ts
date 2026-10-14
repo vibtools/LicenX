@@ -1,6 +1,5 @@
 import type { Client, Transaction } from "@libsql/client";
 
-type ReactivationLimitPolicy = "all-inactive" | "logged-out-only";
 const MAX_TRANSACTION_ATTEMPTS = 12;
 
 interface BindDeviceParams {
@@ -13,7 +12,6 @@ interface BindDeviceParams {
   ipAddress: string;
   now: number;
   deviceLimit: number;
-  reactivationLimitPolicy: ReactivationLimitPolicy;
   rejectBlocked: boolean;
 }
 
@@ -51,7 +49,6 @@ export async function bindDeviceWithinLimit({
   ipAddress,
   now,
   deviceLimit,
-  reactivationLimitPolicy,
   rejectBlocked,
 }: BindDeviceParams): Promise<BindDeviceResult> {
   for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt++) {
@@ -78,11 +75,7 @@ export async function bindDeviceWithinLimit({
       }
 
       const wasActive = existingStatus === "active";
-      const shouldCheckLimit =
-        !existingDevice ||
-        (!wasActive &&
-          (reactivationLimitPolicy === "all-inactive" ||
-            existingStatus === "logged_out"));
+      const shouldCheckLimit = !wasActive;
 
       if (
         shouldCheckLimit &&

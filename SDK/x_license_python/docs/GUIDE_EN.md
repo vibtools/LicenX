@@ -80,8 +80,9 @@ The VCON Python SDK provides client-side protection by communicating with your c
 
 ### Requirements
 
-- **Python Version:** 3.8, 3.9, 3.10, 3.11, or 3.12+
-- **Operating Systems:** Windows 10/11, macOS (Intel & Apple Silicon), Linux (Ubuntu, Debian, CentOS, Arch, etc.)
+- **Declared Python Compatibility:** Python 3.8+
+- **Release CI matrix:** Python 3.8–3.15 on GitHub-hosted Ubuntu, Windows, and Intel macOS runners. The configured matrix is not a passing hosted result; Python versions newer than 3.15, Apple Silicon, and Linux distributions other than Ubuntu are not covered by it.
+- **Operating Systems:** Windows, macOS, and Linux. The release CI matrix covers the runner environments listed above; it does not certify every OS release, architecture, or Linux distribution.
 
 ### Dependencies
 
@@ -121,6 +122,8 @@ Download the configuration file from your **VCON Admin Panel** (**Applications T
 ```
 
 `public_key_pem` is a required trust anchor, not an optional convenience. Use the public key from the Admin Panel's downloaded application config and deliver that config through a trusted channel. Never take the first trusted key from the validation response or an unauthenticated `/v1/public-key` response. If the field is missing or empty, license validation is rejected.
+
+Remote `server_url` values must use HTTPS. HTTP is accepted only for an explicitly configured localhost or loopback IP endpoint for local development/testing (for example, `http://127.0.0.1:3000`). The SDK rejects remote HTTP before sending license credentials and does not disable standard TLS certificate verification.
 
 **Existing-client migration:** Before upgrading deployed clients, provision their config with the intended server public key. For key rotation, distribute and install the new public key before the server begins signing with the corresponding private key. The SDK does not trust-on-first-use or auto-adopt a replacement key.
 
@@ -252,7 +255,9 @@ Once authenticated, `BackgroundLicenseWorker` launches a daemon thread:
 
 - **Frequency:** Every 20 minutes (configurable via `ping_interval_seconds`).
 - **Resource Footprint:** Zero impact on UI thread; low CPU and memory footprint.
-- **Revocation Handling:** If an admin suspends, revokes, or deletes a license in the VCON Admin Panel, the background worker detects the rejection and fires the `on_license_revoked` callback.
+- **Authenticated challenge:** Each heartbeat includes a fresh random nonce. The server signs the response, and the SDK verifies it with the configured `public_key_pem` and checks the echoed nonce.
+- **Fail-closed policy:** There is no offline grace. A timeout, transport error, non-success response, malformed/unsigned response, invalid signature, or nonce mismatch immediately invalidates local access.
+- **Invalidation callback:** `on_license_revoked` is the legacy callback name; it runs for server revocation/unbind and for any heartbeat that cannot be authenticated, including connectivity failure.
 
 ```python
 def handle_license_termination(reason: str):
@@ -268,6 +273,7 @@ You can also trigger an **on-demand ping** at any time:
 ```python
 status = client.ping()
 if not status.get("valid"):
+    # The active SDK session has already been invalidated.
     print("License is no longer valid:", status.get("message"))
 ```
 
