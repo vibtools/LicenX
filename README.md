@@ -154,7 +154,7 @@ LicenX includes first-class support for **Cloudflare Pages with Pages Functions*
 
 ## 🐍 Python Client SDK
 
-LicenX provides a production-ready, zero-dependency Python client SDK located at [`SDK/x_license_python/`](./SDK/x_license_python/).
+LicenX provides a Python client SDK at [`SDK/x_license_python/`](./SDK/x_license_python/). Signed license-response verification requires `cryptography`; HTTP transport optionally uses `requests` and falls back to Python's standard-library `urllib`.
 
 ### Installation
 
@@ -168,6 +168,8 @@ from x_license_python import XLicenseClient, SDKConfig
 # Download this app config from the Admin Panel and provision it through a trusted channel.
 # It must contain the server's independently trusted public_key_pem.
 config = SDKConfig.from_file("my_app_vcon_config.json")
+# Set this to the release version of the application being run.
+config.app_version = "2.4.1"
 
 client = XLicenseClient(config)
 

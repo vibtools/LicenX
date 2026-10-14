@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Play, RotateCw, Loader2 } from 'lucide-react';
-import { api } from '../services/apiClient';
+import { Loader2, Play, RotateCw, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ApiError, api } from '../services/apiClient';
 import { AppItem } from '../types';
 
 export const SimulatorTab: React.FC = () => {
@@ -73,8 +73,17 @@ export const SimulatorTab: React.FC = () => {
         os_info: osInfo.trim(),
       });
       setResponse(res);
-    } catch (err: any) {
-      setResponse({ status: 500, ok: false, data: { error: err.message } });
+    } catch (err: unknown) {
+      const apiError = err instanceof ApiError ? err : null;
+      setResponse({
+        status: apiError?.status ?? 0,
+        ok: false,
+        requestId: apiError?.requestId,
+        data: {
+          error: apiError?.message || 'Validation request failed.',
+          code: apiError?.code || 'REQUEST_FAILED',
+        },
+      });
     } finally {
       setLoading(false);
     }
@@ -213,13 +222,29 @@ export const SimulatorTab: React.FC = () => {
                       : 'bg-rose-950/30 text-rose-400 border border-rose-900/40'
                   }`}
                 >
-                  HTTP {response.status}
+                  {response.status > 0 ? `HTTP ${response.status}` : 'NETWORK ERROR'}
                 </span>
               )}
             </div>
 
             {response ? (
               <div className="space-y-2">
+                {(response.requestId || response.data?.diagnostic) && (
+                  <div className="rounded border border-slate-800 bg-slate-950 p-2 text-[11px] text-slate-300 space-y-1">
+                    {(response.requestId || response.data?.request_id) && (
+                      <div>Request ID: {response.requestId || response.data.request_id}</div>
+                    )}
+                    {response.data?.diagnostic && (
+                      <>
+                        <div>Stage: {response.data.diagnostic.stage}</div>
+                        <div>Error: {response.data.diagnostic.error_name}</div>
+                        <div className="break-words whitespace-pre-wrap text-rose-300">
+                          {response.data.diagnostic.error_message}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 {response.ok && response.data?.signature && (
                   <div className="p-2 rounded bg-emerald-950/20 border border-emerald-900/40 flex items-center gap-1.5 text-emerald-400 text-[11px]">
                     <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />

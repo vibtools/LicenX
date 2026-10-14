@@ -53,7 +53,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, X-Requested-With, X-CSRF-Token",
+    "Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-LicenX-Diagnostic-Request-ID",
 };
 
 function jsonResponse(
@@ -101,6 +101,81 @@ function isValidLicenseValidationPayload(payload: unknown): boolean {
     return value === undefined || typeof value === "string";
   });
 }
+
+const DIAGNOSTIC_REQUEST_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function redactValidationDiagnosticText(
+  value: string,
+  request: Request,
+  env: any,
+  body: any,
+): string {
+  let redacted = value.replace(
+    /-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----/g,
+    "[REDACTED PEM]",
+  );
+  redacted = redacted.replace(
+    /\b(?:libsql|https?|postgres(?:ql)?|mysql):\/\/[^\s"'<>]+/gi,
+    "[REDACTED DATABASE URL]",
+  );
+  const sensitiveBodyValues: unknown[] = [];
+  let inspectedBodyFields = 0;
+  const collectSensitiveBodyValues = (candidate: unknown, depth = 0): void => {
+    if (
+      !candidate ||
+      typeof candidate !== "object" ||
+      depth > 4 ||
+      inspectedBodyFields >= 200
+    ) {
+      return;
+    }
+
+    for (const [name, fieldValue] of Object.entries(candidate)) {
+      inspectedBodyFields += 1;
+      if (
+        /(license.?key|hwid|secret|password|token|credential|authorization|cookie|private|access.?key)/i.test(
+          name,
+        )
+      ) {
+        sensitiveBodyValues.push(fieldValue);
+      }
+      collectSensitiveBodyValues(fieldValue, depth + 1);
+      if (inspectedBodyFields >= 200) return;
+    }
+  };
+  collectSensitiveBodyValues(body);
+
+  const sensitiveHeaders: string[] = [];
+  for (const [name, headerValue] of request.headers) {
+    if (/(authorization|cookie|csrf|token|secret|api.?key)/i.test(name)) {
+      sensitiveHeaders.push(headerValue);
+      const bearerToken = headerValue.match(/^Bearer\s+(.+)$/i)?.[1];
+      if (bearerToken) sensitiveHeaders.push(bearerToken);
+    }
+  }
+
+  const secretValues: unknown[] = [
+    ...sensitiveBodyValues,
+    ...sensitiveHeaders,
+    ...Object.entries(env ?? {})
+      .filter(([name]) =>
+        /(SECRET|TOKEN|PASSWORD|PRIVATE|DATABASE|CREDENTIAL|ACCESS_KEY)/i.test(
+          name,
+        ),
+      )
+      .map(([, secret]) => secret),
+  ];
+
+  for (const secret of secretValues) {
+    if (typeof secret === "string" && secret.length >= 4) {
+      redacted = redacted.split(secret).join("[REDACTED]");
+    }
+  }
+
+  return redacted;
+}
+
 // In-memory admin auth caching to prevent redundant DB roundtrips on every request
 let cachedAdminConfig: {
   jwtSecret: string;
@@ -188,11 +263,8 @@ async function verifyAdminAuth(
     }
 
     return { authorized: true, username: session.username };
-  } catch (error: any) {
-    return {
-      authorized: false,
-      error: SAFE_SERVER_ERROR,
-    };
+  } catch (error: unknown) {
+    throw error;
   }
 }
 
@@ -311,7 +383,12 @@ async function verifyAdminApiKey(
       sql: "UPDATE admin_api_keys SET last_used_at = ? WHERE id = ?",
       args: [Date.now(), apiKey.id],
     }).catch((err) => {
-      console.error("[Admin API Key] Failed to update last_used_at:", err);
+      const errorText =
+        err instanceof Error ? err.stack || err.message : String(err);
+      console.error(
+        "[Admin API Key] Failed to update last_used_at:",
+        redactValidationDiagnosticText(errorText, request, env, {}),
+      );
     });
 
     return {
@@ -323,12 +400,8 @@ async function verifyAdminApiKey(
         app_id: apiKey.app_id || null,
       },
     };
-  } catch (error: any) {
-    return {
-      authorized: false,
-      error: SAFE_SERVER_ERROR,
-      status: 500,
-    };
+  } catch (error: unknown) {
+    throw error;
   }
 }
 
@@ -374,8 +447,20 @@ export async function handleCloudflareApi(
       body = {};
     }
   }
+
   const isLicenseValidationRequest =
     normalizedPath === "/v1/license/validate" && method === "POST";
+  const providedDiagnosticRequestId = request.headers.get(
+    "x-licenx-diagnostic-request-id",
+  );
+  const diagnosticRequestId = isLicenseValidationRequest
+    ? providedDiagnosticRequestId &&
+      DIAGNOSTIC_REQUEST_ID_PATTERN.test(providedDiagnosticRequestId)
+      ? providedDiagnosticRequestId
+      : crypto.randomUUID()
+    : null;
+  let validationStage = isLicenseValidationRequest ? "database_client" : null;
+  let adminDiagnosticsAuthorized = false;
 
   if (isLicenseValidationRequest && !isValidLicenseValidationPayload(body)) {
     return jsonResponse(
@@ -395,13 +480,19 @@ export async function handleCloudflareApi(
     "127.0.0.1";
 
   try {
+    if (isLicenseValidationRequest) validationStage = "database_client";
     const db = getDbClient(env);
 
     // Auto-initialize schema on first request if needed
-    try {
-      await initDatabaseSchema(env);
-    } catch {
-      // Ignore if already initialized
+    if (isLicenseValidationRequest) validationStage = "schema_init";
+    await initDatabaseSchema(env);
+    if (isLicenseValidationRequest) validationStage = "route_dispatch";
+
+    if (isLicenseValidationRequest && providedDiagnosticRequestId) {
+      validationStage = "admin_authorization";
+      const auth = await verifyAdminAuth(request, env);
+      adminDiagnosticsAuthorized = auth.authorized;
+      validationStage = "request_validation";
     }
 
     // -----------------------------------------------------------------
@@ -1859,6 +1950,7 @@ export async function handleCloudflareApi(
     }
 
     if (normalizedPath === "/v1/license/validate" && method === "POST") {
+      validationStage = "request_validation";
       const {
         license_key,
         hwid,
@@ -1877,6 +1969,7 @@ export async function handleCloudflareApi(
       const now = Date.now();
 
       // 1. Fetch server keys for signing
+      validationStage = "signing_key_lookup";
       const configRes = await db.execute(
         "SELECT ed25519_private_key, ed25519_public_key FROM admin_config LIMIT 1",
       );
@@ -1889,12 +1982,14 @@ export async function handleCloudflareApi(
       let matchedApp: any = null;
       if (app_name && typeof app_name === "string" && app_name.trim()) {
         const sanitizedSlug = app_name.trim().toLowerCase();
+        validationStage = "app_lookup";
         const appResult = await db.execute({
           sql: "SELECT * FROM apps WHERE app_slug = ? OR id = ? LIMIT 1",
           args: [sanitizedSlug, app_name.trim()],
         });
 
         if (appResult.rows.length === 0) {
+          validationStage = "validation_audit_log";
           await db.execute({
             sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                   VALUES (?, ?, ?, ?, ?, 'reject', 403, 'Application not registered on server', ?)`,
@@ -1920,6 +2015,7 @@ export async function handleCloudflareApi(
         matchedApp = appResult.rows[0];
 
         if (matchedApp.status !== "active") {
+          validationStage = "validation_audit_log";
           await db.execute({
             sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                   VALUES (?, ?, ?, ?, ?, 'reject', 403, 'Application is inactive', ?)`,
@@ -1967,6 +2063,7 @@ export async function handleCloudflareApi(
           };
 
           if (isOutdated(appVersion, matchedApp.min_version)) {
+            validationStage = "validation_audit_log";
             await db.execute({
               sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                     VALUES (?, ?, ?, ?, ?, 'reject', 426, 'Application version outdated (${appVersion} < ${matchedApp.min_version})', ?)`,
@@ -1994,6 +2091,7 @@ export async function handleCloudflareApi(
       }
 
       // 3. Fetch license record
+      validationStage = "license_lookup";
       const licRes = await db.execute({
         sql: `SELECT l.*, a.status as app_status, a.app_slug, a.display_name
               FROM licenses l
@@ -2003,6 +2101,7 @@ export async function handleCloudflareApi(
       });
 
       if (licRes.rows.length === 0) {
+        validationStage = "validation_audit_log";
         await db.execute({
           sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                 VALUES (?, ?, ?, ?, ?, 'validate', 404, 'License key not found', ?)`,
@@ -2028,8 +2127,10 @@ export async function handleCloudflareApi(
       const lic = licRes.rows[0];
 
       // 4. App Isolation / Scope check
+      validationStage = "license_scope_check";
       if (lic.app_id) {
         if (!matchedApp || matchedApp.id !== lic.app_id) {
+          validationStage = "validation_audit_log";
           await db.execute({
             sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                   VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License key is not authorized for this app', ?)`,
@@ -2055,7 +2156,9 @@ export async function handleCloudflareApi(
       }
 
       // 5. Status checks
+      validationStage = "license_status_check";
       if (lic.status === "revoked") {
+        validationStage = "validation_audit_log";
         await db.execute({
           sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                 VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License revoked by administrator', ?)`,
@@ -2078,6 +2181,7 @@ export async function handleCloudflareApi(
         );
       }
       if (lic.status === "suspended") {
+        validationStage = "validation_audit_log";
         await db.execute({
           sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                 VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License temporarily suspended', ?)`,
@@ -2124,6 +2228,7 @@ export async function handleCloudflareApi(
           expiresAt = now + validityValue * 86400 * 1000;
         }
 
+        validationStage = "license_activation_update";
         await db.execute({
           sql: "UPDATE licenses SET activated_at = ?, expires_at = ? WHERE id = ?",
           args: [activatedAt, expiresAt, lic.id as string],
@@ -2132,10 +2237,12 @@ export async function handleCloudflareApi(
 
       // Check expiry BEFORE device binding
       if (expiresAt && now > expiresAt) {
+        validationStage = "license_expiry_update";
         await db.execute({
           sql: "UPDATE licenses SET status = 'expired' WHERE id = ?",
           args: [lic.id as string],
         });
+        validationStage = "validation_audit_log";
         await db.execute({
           sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                 VALUES (?, ?, ?, ?, ?, 'reject', 403, 'License expired', ?)`,
@@ -2159,7 +2266,9 @@ export async function handleCloudflareApi(
       }
 
       const deviceLimit = Number(lic.device_limit);
+      validationStage = "device_lease_lookup";
       const deviceLeaseSeconds = await getDeviceLeaseSeconds(db, lic.app_id);
+      validationStage = "device_binding";
       const binding = await bindDeviceWithinLimit({
         db,
         licenseId: lic.id as string,
@@ -2189,6 +2298,7 @@ export async function handleCloudflareApi(
         const message = binding.existingDevice
           ? `Device limit reached (${binding.activeDevicesCount}/${deviceLimit})`
           : `Device limit exceeded (${binding.activeDevicesCount}/${deviceLimit})`;
+        validationStage = "validation_audit_log";
         await db.execute({
           sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
                 VALUES (?, ?, ?, ?, ?, 'reject', 403, ?, ?)`,
@@ -2240,12 +2350,14 @@ export async function handleCloudflareApi(
       };
 
       const canonicalPayload = canonicalJson(signedData);
+      validationStage = "response_signing";
       const signature = await signPayloadForCloudflare(
         canonicalPayload,
         privKey,
       );
 
       // Audit log
+      validationStage = "validation_audit_log";
       await db.execute({
         sql: `INSERT INTO validation_logs (id, license_key, app_slug, hwid, ip_address, action, status_code, message, created_at)
               VALUES (?, ?, ?, ?, ?, 'validate', 200, 'Validated and signed successfully', ?)`,
@@ -3304,8 +3416,88 @@ export async function handleCloudflareApi(
       { error: `Endpoint not found: ${method} ${pathname}` },
       404,
     );
-  } catch (error: any) {
-    console.error("[Cloudflare API Error]: Internal server error");
-    return jsonResponse({ error: SAFE_SERVER_ERROR }, 500);
+  } catch (error: unknown) {
+    if (isLicenseValidationRequest && diagnosticRequestId) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack || "" : "";
+      const safeMessage = redactValidationDiagnosticText(
+        errorMessage,
+        request,
+        env,
+        body,
+      );
+      const safeStack = redactValidationDiagnosticText(
+        errorStack,
+        request,
+        env,
+        body,
+      );
+
+      console.error(
+        "[License Validation Diagnostic]",
+        JSON.stringify({
+          request_id: diagnosticRequestId,
+          stage: validationStage,
+          error_name: errorName,
+          error_message: safeMessage,
+          error_stack: safeStack,
+        }),
+      );
+
+      return jsonResponse(
+        {
+          error: SAFE_SERVER_ERROR,
+          request_id: diagnosticRequestId,
+          ...(adminDiagnosticsAuthorized
+            ? {
+                diagnostic: {
+                  request_id: diagnosticRequestId,
+                  stage: validationStage,
+                  error_name: errorName,
+                  error_message: safeMessage,
+                },
+              }
+            : {}),
+        },
+        500,
+        { "Cache-Control": "no-store" },
+      );
+    }
+
+    const requestId = crypto.randomUUID();
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack || "" : "";
+    console.error(
+      "[Cloudflare API Error]",
+      JSON.stringify({
+        request_id: requestId,
+        error_name: redactValidationDiagnosticText(
+          errorName,
+          request,
+          env,
+          body,
+        ),
+        error_message: redactValidationDiagnosticText(
+          errorMessage,
+          request,
+          env,
+          body,
+        ),
+        error_stack: redactValidationDiagnosticText(
+          errorStack,
+          request,
+          env,
+          body,
+        ),
+      }),
+    );
+    return jsonResponse(
+      { error: SAFE_SERVER_ERROR, request_id: requestId },
+      500,
+      { "Cache-Control": "no-store" },
+    );
   }
 }

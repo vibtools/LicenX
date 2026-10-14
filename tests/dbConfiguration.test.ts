@@ -71,10 +71,36 @@ test("Cloudflare request fails clearly when remote database bindings are missing
     new Request("https://licenx.test/health"),
     {},
   );
-  const body = (await response.json()) as { error?: string };
+  const body = (await response.json()) as {
+    error?: string;
+    request_id?: string;
+  };
 
   assert.equal(response.status, 500);
-  assert.deepEqual(body, { error: "Internal server error" });
+  assert.equal(body.error, "Internal server error");
+  assert.match(body.request_id || "", /^[0-9a-f-]{36}$/i);
+});
+
+test("Cloudflare health does not succeed when schema initialization fails", async () => {
+  const env = { DATABASE_URL: "http://127.0.0.1:1" };
+  const client = getDbClient(env);
+
+  try {
+    const response = await handleCloudflareApi(
+      new Request("https://licenx.test/health"),
+      env,
+    );
+    const body = (await response.json()) as {
+      error?: string;
+      request_id?: string;
+    };
+
+    assert.equal(response.status, 500);
+    assert.equal(body.error, "Internal server error");
+    assert.match(body.request_id || "", /^[0-9a-f-]{36}$/i);
+  } finally {
+    await client.close();
+  }
 });
 
 test("accepts remote configuration for Node production and Cloudflare", () => {

@@ -1,5 +1,5 @@
+import { Check, Copy, Cpu, Download, FileCode, FolderArchive, ShieldCheck, Terminal } from 'lucide-react';
 import React, { useState } from 'react';
-import { Copy, Check, Terminal, Download, FolderArchive, FileCode, CheckCircle2, ShieldCheck, Cpu } from 'lucide-react';
 import { api } from '../services/apiClient';
 
 interface ClientCodeTabProps {
@@ -53,8 +53,11 @@ def on_revoked(reason: str):
     print(f"\\n[CRITICAL] License terminated remotely by server: {reason}")
     sys.exit(1)
 
+# Replace this with your application's release version.
+APP_VERSION = "2.4.1"
+
 # 1. Initialize Client (Auto-loads <app_name>_vcon_config.json from project folder)
-client = XLicenseClient(on_license_revoked=on_revoked)
+client = XLicenseClient(app_version=APP_VERSION, on_license_revoked=on_revoked)
 
 # 2. Try saved session Auto-Login first (Strict online validation enforced)
 res = client.auto_login()
@@ -83,7 +86,7 @@ curl -X POST "${serverUrl}/api/v1/license/validate" \\
   -d '{
     "license_key": "VCON-ABCD-EFGH-IJKL",
     "app_name": "vcon_default",
-    "app_version": "1.0.0",
+    "app_version": "REPLACE_WITH_CLIENT_RELEASE_VERSION",
     "hwid": "HWID-9F82-BCA1-48C7-1122",
     "device_name": "DESKTOP-CLIENT",
     "os_info": "Windows 11 Pro 64-bit"
@@ -116,7 +119,7 @@ curl -X POST "${serverUrl}/api/v1/license/logout" \\
 const SERVER_URL = '${serverUrl}';
 const PUBLIC_KEY_PEM = \`${publicKeyPem || '-----BEGIN PUBLIC KEY-----\\n...\\n-----END PUBLIC KEY-----'}\`;
 
-export async function validateLicense(licenseKey: string, hwid: string, appName = 'vcon_default'): Promise<boolean> {
+export async function validateLicense(licenseKey: string, hwid: string, appVersion: string, appName = 'vcon_default'): Promise<boolean> {
   const res = await fetch(\`\${SERVER_URL}/api/v1/license/validate\`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -124,7 +127,7 @@ export async function validateLicense(licenseKey: string, hwid: string, appName 
       license_key: licenseKey,
       hwid: hwid,
       app_name: appName,
-      app_version: '1.0.0',
+      app_version: appVersion,
       device_name: 'NodeClient',
       os_info: process.platform,
       client_time: Date.now(),
@@ -163,7 +166,7 @@ public class VconLicenseClient
 {
     private static readonly string ServerUrl = "${serverUrl}";
 
-    public static async Task<bool> ValidateAsync(string licenseKey, string hwid, string appName = "vcon_default")
+    public static async Task<bool> ValidateAsync(string licenseKey, string hwid, string appVersion, string appName = "vcon_default")
     {
         using var client = new HttpClient();
         var payload = new
@@ -171,7 +174,7 @@ public class VconLicenseClient
             license_key = licenseKey,
             hwid = hwid,
             app_name = appName,
-            app_version = "1.0.0",
+            app_version = appVersion,
             device_name = Environment.MachineName,
             os_info = Environment.OSVersion.ToString(),
             client_time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()

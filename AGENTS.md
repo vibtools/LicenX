@@ -65,3 +65,11 @@ Before any bug fix, feature change, production update, deployment change, or oth
 11. Do not implement the next phase until the user provides a separate explicit approval command for that phase.
 
 All development-time Markdown plans, forensic notes, error audits, and phase logs belong under `notes/`. Preserve the existing `.gitignore` behavior unless the user explicitly asks to change tracking policy.
+
+## Project Memory Maintenance
+
+Use the root [`MEMORY.md`](./MEMORY.md) as the maintained project orientation. Source code and manifests remain authoritative; keep the memory factual, avoid secrets, and do not treat dated notes or local test results as current without verification.
+
+**CRITICAL RULE: Whenever a change, update, bug fix, or new feature is implemented in this project during our conversation, you (the AI) must automatically prompt me to update the `MEMORY.md` file, or directly write/suggest the exact markdown updates needed to keep the project memory 100% up-to-date in real-time.**
+
+By default, update the relevant `MEMORY.md` sections in the same task after verifying an implementation change. If a safe, accurate memory edit cannot be made, explicitly prompt the user before finishing and include the exact proposed Markdown text. Do not trigger this rule recursively for a task that only edits project documentation or `MEMORY.md`; do not use it to expand the approved implementation scope.

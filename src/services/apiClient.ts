@@ -33,6 +33,7 @@ export class ApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly code: string,
+    public readonly requestId?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -40,16 +41,20 @@ export class ApiError extends Error {
 }
 
 function safeErrorMessage(status: number): string {
-  if (status === 0) return "Unable to connect. Check your connection and try again.";
+  if (status === 0)
+    return "Unable to connect. Check your connection and try again.";
   if (status === 400 || status === 422) {
     return "The request could not be completed. Check the entered values and try again.";
   }
-  if (status === 401) return "Authentication failed or your session has expired.";
-  if (status === 403) return "You do not have permission to perform this action.";
+  if (status === 401)
+    return "Authentication failed or your session has expired.";
+  if (status === 403)
+    return "You do not have permission to perform this action.";
   if (status === 404) return "The requested resource could not be found.";
   if (status === 409) return "The request conflicts with the current state.";
   if (status === 429) return "Too many requests. Please wait and try again.";
-  if (status >= 500) return "The server could not complete the request. Please try again.";
+  if (status >= 500)
+    return "The server could not complete the request. Please try again.";
   return "The request could not be completed. Please try again.";
 }
 
@@ -64,6 +69,31 @@ function safeErrorCode(data: unknown, fallback: string): string {
     return data.code;
   }
   return fallback;
+}
+
+const DIAGNOSTIC_REQUEST_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface ValidationDiagnostic {
+  request_id: string;
+  stage: string;
+  error_name: string;
+  error_message: string;
+}
+
+function isValidationDiagnostic(value: unknown): value is ValidationDiagnostic {
+  if (typeof value !== "object" || value === null) return false;
+  const diagnostic = value as Record<string, unknown>;
+  return (
+    typeof diagnostic.request_id === "string" &&
+    DIAGNOSTIC_REQUEST_ID_PATTERN.test(diagnostic.request_id) &&
+    typeof diagnostic.stage === "string" &&
+    /^[a-z_]{1,64}$/.test(diagnostic.stage) &&
+    typeof diagnostic.error_name === "string" &&
+    diagnostic.error_name.length <= 128 &&
+    typeof diagnostic.error_message === "string" &&
+    diagnostic.error_message.length <= 2000
+  );
 }
 
 async function fetchWithTimeout<T>(
@@ -91,7 +121,11 @@ async function fetchWithTimeout<T>(
     return { response, body: await readBody(response) };
   } catch {
     if (timedOut) {
-      throw new ApiError("The request timed out. Please try again.", 0, "TIMEOUT");
+      throw new ApiError(
+        "The request timed out. Please try again.",
+        0,
+        "TIMEOUT",
+      );
     }
     if (externalSignal?.aborted) {
       throw new ApiError("The request was cancelled.", 0, "REQUEST_ABORTED");
@@ -105,15 +139,23 @@ async function fetchWithTimeout<T>(
 
 async function getCsrfToken(): Promise<string> {
   if (!csrfTokenPromise) {
-    csrfTokenPromise = fetchWithTimeout("/api/auth/csrf", {
-      credentials: "same-origin",
-    }, (response) => response.text())
+    csrfTokenPromise = fetchWithTimeout(
+      "/api/auth/csrf",
+      {
+        credentials: "same-origin",
+      },
+      (response) => response.text(),
+    )
       .then(({ response: res, body }) => {
         let data: unknown;
         try {
           data = JSON.parse(body);
         } catch {
-          throw new ApiError(safeErrorMessage(res.status), res.status, "INVALID_RESPONSE");
+          throw new ApiError(
+            safeErrorMessage(res.status),
+            res.status,
+            "INVALID_RESPONSE",
+          );
         }
         if (
           !res.ok ||
@@ -177,11 +219,15 @@ async function request<T>(
     headers.set("X-CSRF-Token", await getCsrfToken());
   }
 
-  const { response: res, body } = await fetchWithTimeout(endpoint, {
-    ...options,
-    credentials: "same-origin",
-    headers,
-  }, (response) => response.text());
+  const { response: res, body } = await fetchWithTimeout(
+    endpoint,
+    {
+      ...options,
+      credentials: "same-origin",
+      headers,
+    },
+    (response) => response.text(),
+  );
 
   let data: unknown;
   try {
@@ -245,13 +291,10 @@ export const api = {
   },
   login: async (data: { username: string; password: string }) => {
     invalidateCache();
-    return request<{ success: boolean; username: string }>(
-      "/api/auth/login",
-      {
-        method: "POST",
-        body: JSON.stringify(data),
-      },
-    );
+    return request<{ success: boolean; username: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   },
   logout: async () => {
     invalidateCache();
@@ -429,7 +472,11 @@ export const api = {
       (response) => response.blob(),
     );
     if (!res.ok) {
-      throw new ApiError(safeErrorMessage(res.status), res.status, `HTTP_${res.status}`);
+      throw new ApiError(
+        safeErrorMessage(res.status),
+        res.status,
+        `HTTP_${res.status}`,
+      );
     }
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -711,23 +758,32 @@ export const api = {
     ),
 
   // Public Client Endpoints
-  validateLicense: (data: {
+  validateLicense: async (data: {
     license_key: string;
     hwid: string;
     app_name?: string;
     app_version?: string;
     device_name?: string;
     os_info?: string;
-  }) =>
-    fetchWithTimeout(
-      "/api/v1/license/validate",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, client_time: Date.now() }),
-      },
-      (response) => response.text(),
-    ).then(({ response: res, body }) => {
+  }) => {
+    const requestId = globalThis.crypto.randomUUID();
+    try {
+      const csrfToken = await getCsrfToken();
+      const { response: res, body } = await fetchWithTimeout(
+        "/api/v1/license/validate",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+            "X-LicenX-Diagnostic-Request-ID": requestId,
+          },
+          body: JSON.stringify({ ...data, client_time: Date.now() }),
+        },
+        (response) => response.text(),
+      );
       let responseData: unknown;
       try {
         responseData = JSON.parse(body);
@@ -738,14 +794,47 @@ export const api = {
           "INVALID_RESPONSE",
         );
       }
+      const parsedResponse =
+        typeof responseData === "object" && responseData !== null
+          ? (responseData as Record<string, unknown>)
+          : null;
+      const responseRequestId =
+        typeof parsedResponse?.request_id === "string" &&
+        DIAGNOSTIC_REQUEST_ID_PATTERN.test(parsedResponse.request_id)
+          ? parsedResponse.request_id
+          : requestId;
+      const diagnosticCandidate = parsedResponse?.diagnostic;
+      const diagnostic = isValidationDiagnostic(diagnosticCandidate)
+        ? {
+            request_id: diagnosticCandidate.request_id,
+            stage: diagnosticCandidate.stage,
+            error_name: diagnosticCandidate.error_name,
+            error_message: diagnosticCandidate.error_message,
+          }
+        : undefined;
       if (!res.ok) {
         responseData = {
           error: safeErrorMessage(res.status),
           code: safeErrorCode(responseData, `HTTP_${res.status}`),
+          request_id: responseRequestId,
+          ...(diagnostic && diagnostic.request_id === responseRequestId
+            ? { diagnostic }
+            : {}),
         };
       }
-      return { status: res.status, ok: res.ok, data: responseData };
-    }),
+      return {
+        status: res.status,
+        ok: res.ok,
+        requestId: responseRequestId,
+        data: responseData,
+      };
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw new ApiError(error.message, error.status, error.code, requestId);
+      }
+      throw error;
+    }
+  },
   getPublicKey: () =>
     request<{ algorithm: string; publicKeyPem: string; serverTime: number }>(
       "/api/v1/public-key",
@@ -759,7 +848,11 @@ export const api = {
       (response) => response.blob(),
     );
     if (!res.ok) {
-      throw new ApiError(safeErrorMessage(res.status), res.status, `HTTP_${res.status}`);
+      throw new ApiError(
+        safeErrorMessage(res.status),
+        res.status,
+        `HTTP_${res.status}`,
+      );
     }
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");

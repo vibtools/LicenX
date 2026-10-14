@@ -138,7 +138,7 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
                 <input
                   type="number"
                   min={pingIntervalSeconds + offlineGraceSeconds + 11}
-                  step={60}
+                  step={1}
                   value={deviceLeaseSeconds}
                   onChange={(e) => setDeviceLeaseSeconds(Number(e.target.value))}
                   className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-mono text-xs focus:border-indigo-500/80 focus:outline-none"
