@@ -12,7 +12,7 @@ This patch release strengthens login cleanup, session replacement, heartbeat con
 
 ## Compatibility
 
-No existing public SDK exports were removed. Offline grace is disabled by default, preserving fail-closed behavior unless an administrator explicitly configures it. This release note describes the local v1.2.2 candidate; hosted release, staging, and production verification are not yet confirmed.
+No existing public SDK exports were removed. Offline grace is disabled by default, preserving fail-closed behavior unless an administrator explicitly configures it. The exact v1.2.2 commit passed the hosted release workflow and was published at [Python SDK v1.2.2](https://github.com/vibtools/LicenX/releases/tag/python-sdk-v1.2.2). Staging and production verification have not been performed.
 
 ---
 
@@ -30,4 +30,4 @@ No existing public SDK exports were removed. Offline grace is disabled by defaul
 
 ## সামঞ্জস্য ও যাচাইকরণ
 
-বিদ্যমান public SDK export সরানো হয়নি। Offline grace default-এ বন্ধ, তাই administrator চালু না করলে fail-closed আচরণ অপরিবর্তিত থাকে। এটি স্থানীয় v1.2.2 candidate-এর release note; hosted release, staging বা production verification এখনো নিশ্চিত নয়।
+বিদ্যমান public SDK export সরানো হয়নি। Offline grace default-এ বন্ধ, তাই administrator চালু না করলে fail-closed আচরণ অপরিবর্তিত থাকে। v1.2.2-এর exact commit hosted release workflow pass করে [প্রকাশিত হয়েছে](https://github.com/vibtools/LicenX/releases/tag/python-sdk-v1.2.2)। Staging বা production verification করা হয়নি।
