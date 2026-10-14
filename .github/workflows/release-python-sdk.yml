@@ -8,32 +8,32 @@ on:
 permissions: {}
 
 jobs:
-  release:
+  validate-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      version: ${{ steps.sdk-version.outputs.version }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: 22
+          ref: ${{ github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
-      - name: Install project dependencies
-        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
-
-      - name: Verify tag matches SDK version
+      - name: Verify tag matches SDK version and tagged commit
         id: sdk-version
         env:
           TAG_NAME: ${{ github.ref_name }}
+          EXPECTED_COMMIT: ${{ github.sha }}
         run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          git fetch origin "+refs/tags/${TAG_NAME}:refs/tags/${TAG_NAME}"
+          test "$(git rev-parse "${TAG_NAME}^{commit}")" = "$EXPECTED_COMMIT"
           python - <<'PY'
           import ast
           import os
@@ -69,6 +69,27 @@ jobs:
               output.write(f"version={sdk_version}\n")
           PY
 
+  sdk-tests:
+    needs: validate-release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
       - name: Install SDK test dependencies
         run: python -m pip install -r SDK/x_license_python/requirements.txt
 
@@ -77,18 +98,56 @@ jobs:
           PYTHONPATH: SDK
         run: python -m unittest discover -s SDK/x_license_python/test -p 'test_*.py'
 
+  release:
+    needs: [validate-release, sdk-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checked-out source commit
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project dependencies
+        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+
       - name: Generate SDK archive
         run: npm run build:sdk-archive
 
       - name: Verify SDK archive parity
         run: npm run verify:sdk-archive
 
+      - name: Generate SDK archive checksum
+        run: |
+          cd public
+          sha256sum x_license_python.zip > x_license_python.zip.sha256
+
       - name: Create release and upload SDK archive
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
-          SDK_VERSION: ${{ steps.sdk-version.outputs.version }}
+          SDK_VERSION: ${{ needs.validate-release.outputs.version }}
+          EXPECTED_COMMIT: ${{ github.sha }}
         run: |
+          git fetch origin "+refs/tags/${TAG_NAME}:refs/tags/${TAG_NAME}"
+          test "$(git rev-parse "${TAG_NAME}^{commit}")" = "$EXPECTED_COMMIT"
+
           if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release create "$TAG_NAME" \
               --verify-tag \
@@ -96,4 +155,23 @@ jobs:
               --generate-notes
           fi
 
-          gh release upload "$TAG_NAME" public/x_license_python.zip --clobber
+          gh release upload "$TAG_NAME" \
+            public/x_license_python.zip \
+            public/x_license_python.zip.sha256 \
+            --clobber
+
+      - name: Verify uploaded release assets
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          verification_dir="$RUNNER_TEMP/release-verification"
+          mkdir -p "$verification_dir"
+          gh release download "$TAG_NAME" \
+            --pattern x_license_python.zip \
+            --pattern x_license_python.zip.sha256 \
+            --dir "$verification_dir"
+          (
+            cd "$verification_dir"
+            sha256sum --check x_license_python.zip.sha256
+          )
+          cmp public/x_license_python.zip "$verification_dir/x_license_python.zip"
