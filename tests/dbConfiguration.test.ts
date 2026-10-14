@@ -8,6 +8,7 @@ import {
   initDatabaseSchema,
   resolveDatabaseConfig,
 } from "../src/server/db.js";
+import { getDeviceLeaseSeconds } from "../src/server/deviceBinding.js";
 
 test("keeps local SQLite as the development default", () => {
   assert.deepEqual(resolveDatabaseConfig(undefined, "development", {}), {
@@ -183,5 +184,76 @@ test("surfaces remote connectivity failures without switching to local SQLite", 
     await assert.rejects(client.execute("SELECT 1"));
   } finally {
     await client.close();
+  }
+});
+
+test("migrates missing lease columns before returning from the existing-schema fast path", async () => {
+  const originalEnvironment = {
+    NODE_ENV: process.env.NODE_ENV,
+    DATABASE_URL: process.env.DATABASE_URL,
+    TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
+    TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
+  };
+  process.env.NODE_ENV = "test";
+  process.env.DATABASE_URL = "file::memory:?cache=shared";
+  delete process.env.TURSO_DATABASE_URL;
+  delete process.env.TURSO_AUTH_TOKEN;
+  const client = getDbClient();
+
+  try {
+    await client.execute(`
+      CREATE TABLE admin_config (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        jwt_secret TEXT NOT NULL,
+        ed25519_private_key TEXT NOT NULL,
+        ed25519_public_key TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    await client.execute(`
+      CREATE TABLE apps (
+        id TEXT PRIMARY KEY,
+        app_slug TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        min_version TEXT NOT NULL DEFAULT '1.0.0',
+        status TEXT NOT NULL DEFAULT 'active',
+        app_secret TEXT NOT NULL,
+        description TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    await client.execute(
+      "CREATE TABLE licenses (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)",
+    );
+    await client.execute(
+      "CREATE TABLE devices (id TEXT PRIMARY KEY, first_bound_at INTEGER NOT NULL)",
+    );
+    await client.execute("CREATE TABLE validation_logs (id TEXT PRIMARY KEY)");
+    await client.execute({
+      sql: `INSERT INTO apps
+            (id, app_slug, display_name, app_secret, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ["legacy-app", "legacy-app", "Legacy App", "test-secret", 1, 1],
+    });
+
+    await initDatabaseSchema();
+
+    const appColumns = await client.execute("PRAGMA table_info(apps)");
+    assert.ok(
+      appColumns.rows.some(
+        (column) => String(column.name) === "device_lease_seconds",
+      ),
+    );
+    assert.equal(await getDeviceLeaseSeconds(client, "legacy-app"), 7200);
+  } finally {
+    await client.close();
+    for (const [key, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });

@@ -170,6 +170,22 @@ export function getDbClient(env?: DatabaseEnvironment): Client {
   return dbClient;
 }
 
+async function ensureColumnExists(
+  db: Client,
+  tableName: string,
+  columnName: string,
+  columnDefinition: string,
+): Promise<void> {
+  const columns = await db.execute(`PRAGMA table_info(${tableName})`);
+  if (columns.rows.some((column) => String(column.name) === columnName)) {
+    return;
+  }
+
+  await db.execute(
+    `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`,
+  );
+}
+
 export async function initDatabaseSchema(env?: any): Promise<void> {
   if (isSchemaInitialized) return;
   if (schemaInitPromise) return schemaInitPromise;
@@ -229,31 +245,60 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
       ON admin_api_keys(secret_hash)
     `);
 
+    let coreTablesExist = false;
     try {
-      // Fast probe: check if all 5 core tables exist
       const check = await db.execute(
         "SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name IN ('admin_config', 'apps', 'licenses', 'devices', 'validation_logs')",
       );
-      const count = Number(check.rows[0]?.c || 0);
-      if (count >= 5) {
-        // Fast path: Database schema already exists!
-        // Ensure high-performance indexes exist silently
-        try {
-          await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON licenses(created_at DESC)",
-          );
-          await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_devices_first_bound ON devices(first_bound_at DESC)",
-          );
-        } catch {}
-        isSchemaInitialized = true;
-        return;
-      }
+      coreTablesExist = Number(check.rows[0]?.c || 0) >= 5;
     } catch (probeError) {
       console.warn(
         "[VCON] Database connection probe check failed:",
         probeError,
       );
+    }
+
+    if (coreTablesExist) {
+      // Fast path: Database schema already exists!
+      await ensureColumnExists(
+        db,
+        "admin_config",
+        "site_settings_json",
+        "TEXT",
+      );
+      await ensureColumnExists(
+        db,
+        "apps",
+        "device_lease_seconds",
+        `INTEGER NOT NULL DEFAULT ${DEFAULT_DEVICE_LEASE_SECONDS}`,
+      );
+      await ensureColumnExists(
+        db,
+        "apps",
+        "ping_interval_seconds",
+        `INTEGER NOT NULL DEFAULT ${DEFAULT_PING_INTERVAL_SECONDS}`,
+      );
+      await ensureColumnExists(
+        db,
+        "apps",
+        "offline_grace_seconds",
+        `INTEGER NOT NULL DEFAULT ${DEFAULT_OFFLINE_GRACE_SECONDS}`,
+      );
+      await ensureColumnExists(db, "licenses", "app_id", "TEXT");
+      await ensureColumnExists(db, "licenses", "pin", "TEXT");
+      await ensureColumnExists(db, "validation_logs", "app_slug", "TEXT");
+
+      // Ensure high-performance indexes exist silently
+      try {
+        await db.execute(
+          "CREATE INDEX IF NOT EXISTS idx_licenses_created_at ON licenses(created_at DESC)",
+        );
+        await db.execute(
+          "CREATE INDEX IF NOT EXISTS idx_devices_first_bound ON devices(first_bound_at DESC)",
+        );
+      } catch {}
+      isSchemaInitialized = true;
+      return;
     }
 
     // 1. Admin config table
