@@ -162,6 +162,7 @@ jobs:
 
       - name: Verify uploaded release assets
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
           verification_dir="$RUNNER_TEMP/release-verification"
