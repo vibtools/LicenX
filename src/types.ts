@@ -3,9 +3,12 @@ export interface AppItem {
   app_slug: string;
   display_name: string;
   min_version: string;
-  status: 'active' | 'inactive';
+  status: "active" | "inactive";
   app_secret?: string;
   description?: string | null;
+  device_lease_seconds: number;
+  ping_interval_seconds: number;
+  offline_grace_seconds: number;
   created_at: number;
   updated_at: number;
   licenses_count?: number;
@@ -14,13 +17,13 @@ export interface AppItem {
 export interface License {
   id: string;
   key: string;
-  status: 'active' | 'suspended' | 'expired' | 'revoked';
+  status: "active" | "suspended" | "expired" | "revoked";
   tier: string;
   app_id?: string | null;
   app_name?: string | null;
   app_slug?: string | null;
   device_limit: number;
-  validity_type: 'hourly' | 'daily' | 'lifetime';
+  validity_type: "hourly" | "daily" | "lifetime";
   validity_value: number;
   activated_at: number | null;
   expires_at: number | null;
@@ -42,7 +45,7 @@ export interface Device {
   ip_address: string;
   first_bound_at: number;
   last_ping_at: number;
-  status: 'active' | 'blocked';
+  status: "active" | "blocked";
   license_key?: string;
   license_tier?: string;
   license_status?: string;
@@ -99,17 +102,17 @@ export interface SetupStatus {
 }
 
 export type ActiveTab =
-  | 'overview'
-  | 'apps'
-  | 'licenses'
-  | 'devices'
-  | 'logs'
-  | 'simulator'
-  | 'code'
-  | 'profile'
-  | 'admin-apis'
-  | 'site-settings'
-  | 'settings';
+  | "overview"
+  | "apps"
+  | "licenses"
+  | "devices"
+  | "logs"
+  | "simulator"
+  | "code"
+  | "profile"
+  | "admin-apis"
+  | "site-settings"
+  | "settings";
 
 export interface AdminApiKeyRecord {
   id: string;
@@ -154,21 +157,23 @@ export interface SiteSettings {
 }
 
 export const DEFAULT_SITE_SETTINGS: SiteSettings = {
-  siteName: 'LicenX',
-  siteTagline: 'Enterprise Software Licensing & Hardware Authorization Engine',
-  siteTitle: 'LicenX – Software Licensing & Device Verification Engine',
-  metaDescription: 'High-security RSA-2048 licensed distribution platform with hardware device fingerprinting and self-service device control.',
-  logoUrl: '',
-  faviconUrl: '',
-  ogImageUrl: '',
-  footerText: '© 2026 LicenX Open-Source Licensing Engine. All rights reserved.',
-  supportEmail: 'support@vcon.local',
-  telegramUrl: '',
-  discordUrl: '',
-  docsUrl: '',
-  buyLicenseUrl: '#',
+  siteName: "LicenX",
+  siteTagline: "Enterprise Software Licensing & Hardware Authorization Engine",
+  siteTitle: "LicenX – Software Licensing & Device Verification Engine",
+  metaDescription:
+    "High-security RSA-2048 licensed distribution platform with hardware device fingerprinting and self-service device control.",
+  logoUrl: "",
+  faviconUrl: "",
+  ogImageUrl: "",
+  footerText:
+    "© 2026 LicenX Open-Source Licensing Engine. All rights reserved.",
+  supportEmail: "support@vcon.local",
+  telegramUrl: "",
+  discordUrl: "",
+  docsUrl: "",
+  buyLicenseUrl: "#",
   allowPublicCheck: true,
   allowPublicReset: true,
-  noticeBanner: '',
+  noticeBanner: "",
   noticeBannerEnabled: false,
 };

@@ -111,6 +111,7 @@ Download the configuration file from your **VCON Admin Panel** (**Applications T
   "display_name": "My Desktop Pro",
   "min_version": "1.0.0",
   "ping_interval_seconds": 1200,
+  "offline_grace_seconds": 0,
   "auto_logout_on_exit": true,
   "request_timeout_seconds": 15,
   "auto_login_enabled": true,
@@ -122,6 +123,8 @@ Download the configuration file from your **VCON Admin Panel** (**Applications T
 ```
 
 `public_key_pem` is a required trust anchor, not an optional convenience. Use the public key from the Admin Panel's downloaded application config and deliver that config through a trusted channel. Never take the first trusted key from the validation response or an unauthenticated `/v1/public-key` response. If the field is missing or empty, license validation is rejected.
+
+The Admin Panel's Edit Application settings control `ping_interval_seconds` (60–1,200; default 1,200) and `offline_grace_seconds` (0–3,600; default 0) in the downloaded config. The server independently enforces a device lease (default 7,200 seconds) for app-scoped licenses; global licenses use the fixed 2-hour lease. Client config cannot extend that server lease.
 
 Remote `server_url` values must use HTTPS. HTTP is accepted only for an explicitly configured localhost or loopback IP endpoint for local development/testing (for example, `http://127.0.0.1:3000`). The SDK rejects remote HTTP before sending license credentials and does not disable standard TLS certificate verification.
 
@@ -253,11 +256,14 @@ Login transmits the HWID needed for device binding and only the `device_name` an
 
 Once authenticated, `BackgroundLicenseWorker` launches a daemon thread:
 
-- **Frequency:** Every 20 minutes (configurable via `ping_interval_seconds`).
+- **Frequency:** Every 20 minutes by default; configurable from 60 to 1,200 seconds via `ping_interval_seconds`.
 - **Resource Footprint:** Zero impact on UI thread; low CPU and memory footprint.
 - **Authenticated challenge:** Each heartbeat includes a fresh random nonce. The server signs the response, and the SDK verifies it with the configured `public_key_pem` and checks the echoed nonce.
-- **Fail-closed policy:** There is no offline grace. A timeout, transport error, non-success response, malformed/unsigned response, invalid signature, or nonce mismatch immediately invalidates local access.
-- **Invalidation callback:** `on_license_revoked` is the legacy callback name; it runs for server revocation/unbind and for any heartbeat that cannot be authenticated, including connectivity failure.
+- **Offline grace:** `offline_grace_seconds` defaults to 0 (fail closed) and accepts 0–3,600 seconds. A positive value retains an already-running session for that duration after the first detected transient network/service outage. A successful signed heartbeat clears the outage timer.
+- **Immediate invalidation:** Explicit server denial/revocation, malformed response, invalid signature, nonce mismatch, or TLS verification failure invalidates access immediately and never receives grace.
+- **Heartbeat opt-out:** Setting `enable_background_heartbeat` to false disables automatic revocation checks and grace-expiry enforcement; no automatic detection SLA applies.
+- **Device lease:** The server renews a binding only on a successful heartbeat. If the lease expires, the next heartbeat is denied and the existing session is invalidated. A new login always validates online; if the slot has been released, another device may bind.
+- **Invalidation callback:** `on_license_revoked` is the legacy callback name; it runs when the session is actually invalidated, not for a transient failure covered by grace.
 
 ```python
 def handle_license_termination(reason: str):
@@ -273,8 +279,10 @@ You can also trigger an **on-demand ping** at any time:
 ```python
 status = client.ping()
 if not status.get("valid"):
-    # The active SDK session has already been invalidated.
-    print("License is no longer valid:", status.get("message"))
+    # A transient outage may be within offline grace; check local session state.
+    print("License check failed:", status.get("message"))
+    if not client.is_authenticated():
+        print("License is no longer valid")
 ```
 
 ---

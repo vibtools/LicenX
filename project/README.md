@@ -30,11 +30,11 @@ Server implementation-এর দুটি runtime আছে: Node/Express এব
 
 ## System ও access boundary
 
-| Actor | কোথায় | কী করতে পারে | কী দিয়ে access হয় |
-|---|---|---|---|
-| Administrator | `/vcon` dashboard | Apps, licenses, devices, settings ও logs manage | Setup-এর admin account, এরপর admin authentication token |
-| Customer / license holder | Public portal | সীমিত status check; নিজের license-এর details দেখা; সব bound device reset | License key এবং control/reset-এর জন্য license PIN |
-| Licensed client application | Client SDK বা API | License online validate, HWID bind, heartbeat এবং logout | License key, app identifier/version, HWID; **PIN নয়** |
+| Actor                       | কোথায়             | কী করতে পারে                                                             | কী দিয়ে access হয়                                       |
+| --------------------------- | ----------------- | ------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Administrator               | `/vcon` dashboard | Apps, licenses, devices, settings ও logs manage                          | Setup-এর admin account, এরপর admin authentication token |
+| Customer / license holder   | Public portal     | সীমিত status check; নিজের license-এর details দেখা; সব bound device reset | License key এবং control/reset-এর জন্য license PIN       |
+| Licensed client application | Client SDK বা API | License online validate, HWID bind, heartbeat এবং logout                 | License key, app identifier/version, HWID; **PIN নয়**   |
 
 Admin token, customer PIN এবং client license key আলাদা credential/flow। Customer PIN administrator credentials নয়, এবং client login-ও নয়।
 
@@ -89,31 +89,31 @@ Client app-এর কাজ হলো নিজের license বৈধ কি �
 
 ### Python SDK-এর feature তালিকা
 
-| Feature | কেন / কখন | কোথায় |
-|---|---|---|
-| Configuration | Server URL, app identity/version, pinned public key, timeout ও behavior set করতে | `SDKConfig` (`config.py`); config file auto-discovery-ও আছে |
-| Online license login | User-এর key দিয়ে license ও current device validate/bind করতে | `XLicenseClient.login()` |
-| Saved-session auto-login | পরের launch-এ key prompt কমাতে; তবু server online validation আবশ্যক | `XLicenseClient.auto_login()` |
-| Device fingerprint / telemetry | Device limit প্রয়োগ ও validation request-এ machine context দিতে | `DeviceManager.get_hwid()`, `get_device_telemetry()` |
-| Signed response verification | Server-এর license response integrity/authenticity যাচাই করতে | `ServerCommunicator.validate_license()` |
-| Heartbeat / on-demand ping | Active session পরবর্তীতে revoke/expire/unbind হয়েছে কি না দেখতে | Background worker এবং `XLicenseClient.ping()` |
-| Revocation callback | Server থেকে rejection এলে app-কে protected feature বন্ধ করার সুযোগ দিতে | `on_license_revoked` callback |
-| Logout / slot release | Session শেষ হলে device binding slot ছাড়তে | `XLicenseClient.logout()` এবং configured exit hooks |
-| Local session storage | Auto-login-এর জন্য saved key/session রাখতে | `BackgroundLicenseWorker` / `storage.py` |
-| Clock-drift check | Server time-এর তুলনায় system clock mismatch শনাক্ত করতে | `OfflineGuard` |
-| HTTP transport fallback | `requests` থাকলে সেটি, না থাকলে standard-library `urllib` ব্যবহার করতে | `server.py` |
+| Feature                        | কেন / কখন                                                                        | কোথায়                                                       |
+| ------------------------------ | -------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Configuration                  | Server URL, app identity/version, pinned public key, timeout ও behavior set করতে | `SDKConfig` (`config.py`); config file auto-discovery-ও আছে |
+| Online license login           | User-এর key দিয়ে license ও current device validate/bind করতে                     | `XLicenseClient.login()`                                    |
+| Saved-session auto-login       | পরের launch-এ key prompt কমাতে; তবু server online validation আবশ্যক              | `XLicenseClient.auto_login()`                               |
+| Device fingerprint / telemetry | Device limit প্রয়োগ ও validation request-এ machine context দিতে                  | `DeviceManager.get_hwid()`, `get_device_telemetry()`        |
+| Signed response verification   | Server-এর license response integrity/authenticity যাচাই করতে                     | `ServerCommunicator.validate_license()`                     |
+| Heartbeat / on-demand ping     | Active session পরবর্তীতে revoke/expire/unbind হয়েছে কি না দেখতে                  | Background worker এবং `XLicenseClient.ping()`               |
+| Revocation callback            | Server থেকে rejection এলে app-কে protected feature বন্ধ করার সুযোগ দিতে          | `on_license_revoked` callback                               |
+| Logout / slot release          | Session শেষ হলে device binding slot ছাড়তে                                        | `XLicenseClient.logout()` এবং configured exit hooks         |
+| Local session storage          | Auto-login-এর জন্য saved key/session রাখতে                                       | `BackgroundLicenseWorker` / `storage.py`                    |
+| Clock-drift check              | Server time-এর তুলনায় system clock mismatch শনাক্ত করতে                          | `OfflineGuard`                                              |
+| HTTP transport fallback        | `requests` থাকলে সেটি, না থাকলে standard-library `urllib` ব্যবহার করতে           | `server.py`                                                 |
 
 SDK public API-র মূল methods:
 
-| Method | কাজ |
-|---|---|
-| `login(license_key)` | License online validate করে; PIN নেয় না/ব্যবহার করে না |
-| `auto_login()` | Saved key পড়ে online validation করে |
-| `logout(clear_saved_license=True)` | Active binding ছাড়ে; option অনুযায়ী saved session রাখে বা মুছে |
-| `is_authenticated()` / `is_valid()` | বর্তমান process-এর auth state জানায় |
-| `get_license_info()` / `get_tier()` / `get_current_key()` | বর্তমান সফল validation-এর license তথ্য দেয় |
-| `get_hwid()` / `get_device_telemetry()` | SDK-এর current machine identifier/context দেয় |
-| `ping()` | Active/saved session-এর জন্য on-demand heartbeat করে |
+| Method                                                    | কাজ                                                            |
+| --------------------------------------------------------- | -------------------------------------------------------------- |
+| `login(license_key)`                                      | License online validate করে; PIN নেয় না/ব্যবহার করে না         |
+| `auto_login()`                                            | Saved key পড়ে online validation করে                            |
+| `logout(clear_saved_license=True)`                        | Active binding ছাড়ে; option অনুযায়ী saved session রাখে বা মুছে |
+| `is_authenticated()` / `is_valid()`                       | বর্তমান process-এর auth state জানায়                            |
+| `get_license_info()` / `get_tier()` / `get_current_key()` | বর্তমান সফল validation-এর license তথ্য দেয়                     |
+| `get_hwid()` / `get_device_telemetry()`                   | SDK-এর current machine identifier/context দেয়                  |
+| `ping()`                                                  | Active/saved session-এর জন্য on-demand heartbeat করে           |
 
 > **Offline entitlement নয়:** Saved session থাকলেও `auto_login()` server validation করে। Local saved key-কে offline authorization ধরে নেবেন না।
 
@@ -123,12 +123,14 @@ SDK public API-র মূল methods:
 
 - `server_url`, `public_key_pem`
 - `app_name`, `display_name`, `min_version`
-- `ping_interval_seconds`, `request_timeout_seconds`
+- `ping_interval_seconds` (60–1,200 seconds), `offline_grace_seconds` (0–3,600 seconds), `request_timeout_seconds`
 - `auto_login_enabled`, `auto_save_session`
 - `enable_background_heartbeat`, `auto_logout_on_exit`
 - `strict_online_only`
 
 Admin dashboard-এর Applications অংশ থেকে app-specific client config download করা যায়। SDK integration-এ **বর্তমান `SDKConfig` field ও shipped SDK guide** অনুসরণ করুন; পুরোনো README snippet-এ থাকা অচেনা constructor parameter কপি করবেন না।
+
+Server-owned device lease-এর default ৭,২০০ সেকেন্ড; app-scoped license-এর জন্য Applications > Edit Application থেকে এটি configure করা যায়। Global license-এর shared device binding fixed ২ ঘণ্টা lease ব্যবহার করে। Login/re-login সবসময় online server validation করে; client config server lease পরিবর্তন করতে পারে না।
 
 ### Python-এর বাইরে client integration
 
@@ -157,18 +159,18 @@ Public landing/customer portal-এ admin dashboard login লাগে না।
 
 Dashboard path `/vcon`। প্রথমবার setup-এ admin username/password তৈরি হয়; পরবর্তী dashboard access-এ admin login প্রয়োজন। Admin APIs-তে authenticated token ব্যবহৃত হয়।
 
-| Tab / area | উদ্দেশ্য ও কাজ |
-|---|---|
-| **Overview** | মোট apps/licenses, active/expired/revoked/suspended licenses, active HWIDs ও সাম্প্রতিক validation activity-এর summary; দ্রুত refresh এবং create/bulk workflows-এ যাওয়া। |
-| **Applications** | App slug, display name, minimum version ও descriptionসহ app record তৈরি/সম্পাদনা/মুছুন; activate/deactivate, search/filter/bulk action; app-specific client config download। |
-| **Licenses** | Single/bulk license issue; key, PIN, tier, app scope, validity, device limit (নির্দিষ্ট count বা unlimited), customer metadata ও notes manage; search/filter/copy/export; edit status/PIN; extend validity, reset devices, force logout, delete। |
-| **Devices** | Bound device/HWID, license, machine/OS, IP, status ও last heartbeat দেখুন; search, refresh এবং device unbind/remove করুন। |
-| **Logs** | Validation/rejection audit entries filter ও inspect করুন—status code, action, license key, HWID, message, IP, time; প্রয়োজন হলে logs clear করুন। |
-| **Simulator** | App/version, license key, HWID, device name ও OS দিয়ে server validation flow পরীক্ষা করুন এবং response দেখুন। |
-| **Client Code** | Python/cURL/Node.js/C# integration sample দেখুন, Python SDK ZIP download করুন। |
-| **Profile** | Admin profile/auth details এবং administrator credential update-সংক্রান্ত controls। |
-| **Site Settings** | Public portal name/tagline/title/SEO, logo/favicon/OG image, support/documentation/buy links, footer, notice banner, public check/reset toggles customize করুন। |
-| **Settings** | R2 storage configuration/test, crypto public-key view/copy ও key rotation, admin credentials/security, backup records ও system settings manage। |
+| Tab / area        | উদ্দেশ্য ও কাজ                                                                                                                                                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Overview**      | মোট apps/licenses, active/expired/revoked/suspended licenses, active HWIDs ও সাম্প্রতিক validation activity-এর summary; দ্রুত refresh এবং create/bulk workflows-এ যাওয়া।                                                                         |
+| **Applications**  | App slug, display name, minimum version ও descriptionসহ app record তৈরি/সম্পাদনা/মুছুন; activate/deactivate, search/filter/bulk action; app-specific client config download।                                                                     |
+| **Licenses**      | Single/bulk license issue; key, PIN, tier, app scope, validity, device limit (নির্দিষ্ট count বা unlimited), customer metadata ও notes manage; search/filter/copy/export; edit status/PIN; extend validity, reset devices, force logout, delete। |
+| **Devices**       | Bound device/HWID, license, machine/OS, IP, status ও last heartbeat দেখুন; search, refresh এবং device unbind/remove করুন।                                                                                                                        |
+| **Logs**          | Validation/rejection audit entries filter ও inspect করুন—status code, action, license key, HWID, message, IP, time; প্রয়োজন হলে logs clear করুন।                                                                                                 |
+| **Simulator**     | App/version, license key, HWID, device name ও OS দিয়ে server validation flow পরীক্ষা করুন এবং response দেখুন।                                                                                                                                    |
+| **Client Code**   | Python/cURL/Node.js/C# integration sample দেখুন, Python SDK ZIP download করুন।                                                                                                                                                                   |
+| **Profile**       | Admin profile/auth details এবং administrator credential update-সংক্রান্ত controls।                                                                                                                                                               |
+| **Site Settings** | Public portal name/tagline/title/SEO, logo/favicon/OG image, support/documentation/buy links, footer, notice banner, public check/reset toggles customize করুন।                                                                                  |
+| **Settings**      | R2 storage configuration/test, crypto public-key view/copy ও key rotation, admin credentials/security, backup records ও system settings manage।                                                                                                  |
 
 ### License administration-এর মূল ধারণা
 
@@ -200,15 +202,15 @@ Route-গুলো Node API router এবং Cloudflare handler-এ implement �
 
 ### Customer/client-facing endpoints
 
-| Endpoint | ব্যবহার | Credential/notes |
-|---|---|---|
+| Endpoint                      | ব্যবহার                                        | Credential/notes                                                         |
+| ----------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
 | `POST /v1/user/license/check` | সীমিত public license status/device count check | License key; public-check toggle বর্তমানে enforcement করে বলে নিশ্চিত নয় |
-| `POST /v1/user/control/open` | Customer license control data পড়া | License key + PIN; failed-attempt limit প্রযোজ্য |
-| `POST /v1/user/control/reset` | Customer-এর সব device binding reset | License key + PIN; failed-attempt limit প্রযোজ্য |
-| `GET /v1/public-key` | Client verification key পাওয়া | Public endpoint |
-| `POST /v1/license/validate` | Client license validate / device bind | License key, HWID, app/version/telemetry; **PIN ignored/not required** |
-| `POST /v1/license/ping` | Client heartbeat | License key, HWID, app context |
-| `POST /v1/license/logout` | Client-এর current device logout/unbind | License key + HWID |
+| `POST /v1/user/control/open`  | Customer license control data পড়া              | License key + PIN; failed-attempt limit প্রযোজ্য                         |
+| `POST /v1/user/control/reset` | Customer-এর সব device binding reset            | License key + PIN; failed-attempt limit প্রযোজ্য                         |
+| `GET /v1/public-key`          | Client verification key পাওয়া                  | Public endpoint                                                          |
+| `POST /v1/license/validate`   | Client license validate / device bind          | License key, HWID, app/version/telemetry; **PIN ignored/not required**   |
+| `POST /v1/license/ping`       | Client heartbeat                               | License key, HWID, app context                                           |
+| `POST /v1/license/logout`     | Client-এর current device logout/unbind         | License key + HWID                                                       |
 
 ### Admin-facing endpoint groups
 
@@ -216,21 +218,21 @@ Admin-authenticated API groups include setup/auth, `/apps`, `/licenses`, `/devic
 
 ## গুরুত্বপূর্ণ source map
 
-| Concern | Source |
-|---|---|
-| App shell, `/vcon` dashboard routing ও tabs | `src/App.tsx` |
-| Shared frontend API client ও admin token | `src/services/apiClient.ts` |
-| Shared TypeScript data contracts | `src/types.ts` |
-| Customer portal, PIN forms ও customer reset UX | `src/components/LandingPage.tsx` |
-| Admin navigation | `src/components/Sidebar.tsx` |
-| License validate/control/reset backend | `src/server/api.ts`, `src/server/cloudflareHandler.ts` |
-| PIN rate limiting | `src/server/userControlRateLimit.ts` এবং DB initialization |
-| License PIN cryptographic generation | `src/server/crypto.ts` |
-| Python SDK public facade | `SDK/x_license_python/client.py` |
-| Python login/session orchestration | `SDK/x_license_python/login.py`, `storage.py`, `logout.py` |
-| Python HTTP/signature protocol | `SDK/x_license_python/server.py` |
-| Python configuration/HWID/clock policy | `SDK/x_license_python/config.py`, `device.py`, `offline.py` |
-| Python SDK guides | `SDK/x_license_python/docs/GUIDE_EN.md`, `GUIDE_BN.md` |
+| Concern                                        | Source                                                      |
+| ---------------------------------------------- | ----------------------------------------------------------- |
+| App shell, `/vcon` dashboard routing ও tabs    | `src/App.tsx`                                               |
+| Shared frontend API client ও admin token       | `src/services/apiClient.ts`                                 |
+| Shared TypeScript data contracts               | `src/types.ts`                                              |
+| Customer portal, PIN forms ও customer reset UX | `src/components/LandingPage.tsx`                            |
+| Admin navigation                               | `src/components/Sidebar.tsx`                                |
+| License validate/control/reset backend         | `src/server/api.ts`, `src/server/cloudflareHandler.ts`      |
+| PIN rate limiting                              | `src/server/userControlRateLimit.ts` এবং DB initialization  |
+| License PIN cryptographic generation           | `src/server/crypto.ts`                                      |
+| Python SDK public facade                       | `SDK/x_license_python/client.py`                            |
+| Python login/session orchestration             | `SDK/x_license_python/login.py`, `storage.py`, `logout.py`  |
+| Python HTTP/signature protocol                 | `SDK/x_license_python/server.py`                            |
+| Python configuration/HWID/clock policy         | `SDK/x_license_python/config.py`, `device.py`, `offline.py` |
+| Python SDK guides                              | `SDK/x_license_python/docs/GUIDE_EN.md`, `GUIDE_BN.md`      |
 
 ## Implementation boundary ও maintenance
 

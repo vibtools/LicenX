@@ -1,6 +1,6 @@
 # VCON Python Client SDK (`x_license_python`)
 
-Production-grade, modular client protection and hardware locking SDK for Python applications. Fully integrated with VCON License Server with Multi-App Scoping, Enterprise RSA 2048-bit Cryptographic Response Verification, 20-minute Heartbeat Daemon, and Dynamic Hardware Slot Unbinding on exit.
+Production-grade, modular client protection and hardware locking SDK for Python applications. Fully integrated with VCON License Server with Multi-App Scoping, signed heartbeat verification, configurable heartbeat intervals, per-app bounded offline grace, and Dynamic Hardware Slot Unbinding on exit.
 
 > 📖 **Comprehensive Documentation:**
 >
@@ -11,17 +11,17 @@ Production-grade, modular client protection and hardware locking SDK for Python 
 
 ## 📦 Architecture & Module Responsibilities
 
-| Module               | Scope & Responsibility                                                                                                                                                                                                     |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`config.py`**      | Auto-discovers and parses `<app_name>_vcon_config.json` or `vcon_config.json`. Normalizes server URLs and provides standard configurations.                                                                                |
-| **`device.py`**      | Computes deterministic SHA-256 HWID and offers local hardware telemetry; public-IP lookup is explicit opt-in. Login sends only HWID, device name, and OS metadata.                                                         |
-| **`server.py`**      | Transport and protocol engine. Supports `requests` with native `urllib` standard-library fallback. Requires `cryptography` for RSA and Ed25519 signature verification, pings heartbeat, and delivers unbind notifications. |
-| **`login.py`**       | Handles strict online validation and attempts saved-session auto-login. Persistent key storage is currently disabled. Validates SSL, signatures, app scope, device limit, and active status. Disallows offline logins.     |
-| **`logout.py`**      | Manages manual logout and process exit hooks (`atexit`, `SIGINT`, `SIGTERM`) while preserving existing host signal handlers. Instantly notifies the server to mark device as `logged_out` and release the hardware slot.   |
-| **`storage.py`**     | Disables persistent license-key storage and rejects legacy temp-file sessions; runs a background heartbeat and invalidates local access immediately when its signed challenge fails.                                       |
-| **`offline.py`**     | Enforces online-only security policies and detects system clock manipulation / rollback attacks.                                                                                                                           |
-| **`client.py`**      | High-level facade (`XLicenseClient`) exposing clean, intuitive methods for desktop and CLI Python applications.                                                                                                            |
-| **`example_app.py`** | Complete lifecycle demonstration application ready to test and run.                                                                                                                                                        |
+| Module               | Scope & Responsibility                                                                                                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`config.py`**      | Auto-discovers and parses `<app_name>_vcon_config.json` or `vcon_config.json`. Normalizes server URLs and provides standard configurations.                                                                                          |
+| **`device.py`**      | Computes deterministic SHA-256 HWID and offers local hardware telemetry; public-IP lookup is explicit opt-in. Login sends only HWID, device name, and OS metadata.                                                                   |
+| **`server.py`**      | Transport and protocol engine. Supports `requests` with native `urllib` standard-library fallback. Requires `cryptography` for RSA and Ed25519 signature verification, pings heartbeat, and delivers unbind notifications.           |
+| **`login.py`**       | Handles strict online validation and attempts saved-session auto-login. Persistent key storage is currently disabled. Validates SSL, signatures, app scope, device limit, and active status. Disallows offline logins.               |
+| **`logout.py`**      | Manages manual logout and process exit hooks (`atexit`, `SIGINT`, `SIGTERM`) while preserving existing host signal handlers. Instantly notifies the server to mark device as `logged_out` and release the hardware slot.             |
+| **`storage.py`**     | Disables persistent license-key storage and rejects legacy temp-file sessions; runs background heartbeats, permits only configured temporary outage grace, and immediately invalidates explicit denials or failed signed challenges. |
+| **`offline.py`**     | Enforces online-only login policy and detects system clock manipulation / rollback attacks.                                                                                                                                          |
+| **`client.py`**      | High-level facade (`XLicenseClient`) exposing clean, intuitive methods for desktop and CLI Python applications.                                                                                                                      |
+| **`example_app.py`** | Complete lifecycle demonstration application ready to test and run.                                                                                                                                                                  |
 
 ---
 
@@ -48,9 +48,16 @@ Download `<app_name>_vcon_config.json` from the Admin Panel (**Applications** ta
   "app_name": "vcon_default",
   "display_name": "VCON Default Suite",
   "min_version": "1.0.0",
+  "ping_interval_seconds": 1200,
+  "offline_grace_seconds": 0,
+  "enable_background_heartbeat": true,
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwGQ8N0AkXoz/BQIXlh2F...\n-----END PUBLIC KEY-----\n"
 }
 ```
+
+`ping_interval_seconds` accepts 60–1,200 seconds (default 1,200). `offline_grace_seconds` accepts 0–3,600 seconds (default 0, fail-closed). Positive grace applies to an already-running session after a transient outage is detected; explicit revocation, invalid signatures/nonces, and TLS failures still invalidate immediately. Disabling background heartbeat opts out of automatic revocation and grace-expiry enforcement.
+
+The server-owned device lease defaults to 7,200 seconds (2 hours) and is configurable per app in Admin > Applications > Edit Application. The downloaded SDK config carries that app's heartbeat interval and offline grace; changing local config does not change the server lease. A stale binding releases its device slot. Every login/re-login still requires fresh server validation; global licenses keep the shared 2-hour lease.
 
 `public_key_pem` is required for license authorization. Use the key in the Admin Panel's downloaded client config and provision that file/key through a trusted channel. Do not bootstrap trust by copying a key from an unauthenticated server response or `/v1/public-key`; the SDK ignores keys included in validation responses and rejects authorization when no key is configured.
 
@@ -112,9 +119,10 @@ else:
    - The device slot is immediately freed, allowing the same license to be activated on another PC.
    - Since license keys are not persisted, reopening the app requires the user to enter the key and authenticate online again.
 
-5. **Background Heartbeat Worker (20-Minute Cycle)**:
+5. **Background Heartbeat Worker (20-Minute Default Cycle)**:
    - Runs as a low-priority daemon thread with minimal CPU/RAM footprint.
    - Each success is signed by the server and bound to a fresh client nonce using the configured `public_key_pem` trust anchor.
-   - A transport error, non-success response, malformed payload, missing/invalid signature, or nonce mismatch fails closed: local access is invalidated immediately and there is no offline grace.
-   - Server revocation, suspension, or device unbind also invalidates local access and invokes the legacy `on_license_revoked` callback. The callback may run for connectivity or signature failures, not only an administrator revocation.
-   - `client.ping()` uses the same signed challenge and invalidates the active client on failure. The initial validation payload's legacy grace field does not grant Python SDK heartbeat grace.
+   - The interval is configurable from 60 to 1,200 seconds. `offline_grace_seconds` defaults to 0 (fail closed) and permits up to 3,600 seconds after a detected transient network/service outage.
+   - Successful signed heartbeats clear the outage timer. Explicit server revocation/denial, malformed payloads, signature/nonce failures, and TLS errors invalidate immediately regardless of grace.
+   - `enable_background_heartbeat=False` opts out of automatic revocation checks and grace-expiry enforcement; no automatic detection SLA applies.
+   - `client.ping()` uses the same signed challenge and configured grace policy. The initial validation payload's legacy grace field does not grant Python SDK heartbeat grace.

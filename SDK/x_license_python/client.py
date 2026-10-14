@@ -46,6 +46,7 @@ class XLicenseClient:
         auto_save_session: Optional[bool] = None,
         enable_background_heartbeat: Optional[bool] = None,
         ping_interval_seconds: Optional[int] = None,
+        offline_grace_seconds: Optional[int] = None,
         on_license_revoked: Optional[Callable[[str], None]] = None,
     ):
         if isinstance(config_path, SDKConfig):
@@ -60,7 +61,12 @@ class XLicenseClient:
                 auto_logout_on_exit=True if auto_logout_on_exit is None else auto_logout_on_exit,
                 auto_save_session=True if auto_save_session is None else auto_save_session,
                 enable_background_heartbeat=True if enable_background_heartbeat is None else enable_background_heartbeat,
-                ping_interval_seconds=ping_interval_seconds or 1200,
+                ping_interval_seconds=(
+                    1200 if ping_interval_seconds is None else ping_interval_seconds
+                ),
+                offline_grace_seconds=(
+                    0 if offline_grace_seconds is None else offline_grace_seconds
+                ),
             )
         else:
             self.config = SDKConfig.from_file(config_path)
@@ -73,6 +79,7 @@ class XLicenseClient:
         self.storage = BackgroundLicenseWorker(
             app_name=self.config.app_name,
             ping_interval_seconds=self.config.ping_interval_seconds,
+            offline_grace_seconds=self.config.offline_grace_seconds,
             on_invalidated=self._handle_license_revoked,
             on_heartbeat_success=self._handle_heartbeat_success,
         )
@@ -105,6 +112,15 @@ class XLicenseClient:
         The legacy pin argument is accepted for compatibility but ignored;
         license PINs are only used by the web control panel.
         """
+        if self._current_key and not self.logout():
+            return LoginResult(
+                success=False,
+                status_code=503,
+                message="Previous license session could not be closed. Please retry when the license server is reachable.",
+                code="PREVIOUS_SESSION_LOGOUT_FAILED",
+                license_key=license_key.strip().upper() or None,
+            )
+
         result = self.login_manager.login(license_key)
         if result.success:
             self._authenticated = True
@@ -187,7 +203,10 @@ class XLicenseClient:
         is_active, data = self.server.ping_heartbeat(key, self.get_hwid())
         if not is_active:
             reason = data.get("message") or data.get("code") or "Heartbeat failed"
-            self._handle_license_revoked(reason)
+            if self.storage.should_invalidate_for_heartbeat_failure(data):
+                self._handle_license_revoked(reason)
+        else:
+            self.storage.record_heartbeat_success()
         return data
 
     # -------------------------------------------------------------

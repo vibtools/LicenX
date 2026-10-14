@@ -64,7 +64,7 @@ except ImportError:
 _PLACEHOLDER_HOSTS = {"example.com", "example.net", "example.org", "localhost"}
 _PLACEHOLDER_LABELS = {"demo", "example", "fake", "placeholder"}
 _RESERVED_SUFFIXES = (".example", ".invalid", ".local", ".localhost", ".test")
-DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS = 5
+DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS = 60
 ADMIN_LOGOUT_OBSERVATION_TIMEOUT_MS = 120000
 
 

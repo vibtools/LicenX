@@ -2,6 +2,11 @@ import { createClient, type Client } from "@libsql/client";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  DEFAULT_DEVICE_LEASE_SECONDS,
+  DEFAULT_OFFLINE_GRACE_SECONDS,
+  DEFAULT_PING_INTERVAL_SECONDS,
+} from "./licensePolicy.js";
 
 let dbClient: Client | null = null;
 let currentDbUrl = "";
@@ -285,10 +290,35 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
       status TEXT NOT NULL DEFAULT 'active',
       app_secret TEXT NOT NULL,
       description TEXT,
+      device_lease_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_DEVICE_LEASE_SECONDS},
+      ping_interval_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_PING_INTERVAL_SECONDS},
+      offline_grace_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_OFFLINE_GRACE_SECONDS},
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
   `);
+
+    try {
+      await db.execute(
+        `ALTER TABLE apps ADD COLUMN device_lease_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_DEVICE_LEASE_SECONDS}`,
+      );
+    } catch {
+      // Column already exists, ignore
+    }
+    try {
+      await db.execute(
+        `ALTER TABLE apps ADD COLUMN ping_interval_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_PING_INTERVAL_SECONDS}`,
+      );
+    } catch {
+      // Column already exists, ignore
+    }
+    try {
+      await db.execute(
+        `ALTER TABLE apps ADD COLUMN offline_grace_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_OFFLINE_GRACE_SECONDS}`,
+      );
+    } catch {
+      // Column already exists, ignore
+    }
 
     await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_apps_slug ON apps(app_slug);

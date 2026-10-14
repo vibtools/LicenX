@@ -1,6 +1,25 @@
 import type { Client, Transaction } from "@libsql/client";
+import { DEFAULT_DEVICE_LEASE_SECONDS } from "./licensePolicy.js";
 
 const MAX_TRANSACTION_ATTEMPTS = 12;
+
+export async function getDeviceLeaseSeconds(
+  db: Client,
+  appId: unknown,
+): Promise<number> {
+  if (typeof appId !== "string" || !appId) {
+    return DEFAULT_DEVICE_LEASE_SECONDS;
+  }
+
+  const result = await db.execute({
+    sql: "SELECT device_lease_seconds FROM apps WHERE id = ? LIMIT 1",
+    args: [appId],
+  });
+  const configuredLease = Number(result.rows[0]?.device_lease_seconds);
+  return Number.isSafeInteger(configuredLease) && configuredLease > 0
+    ? configuredLease
+    : DEFAULT_DEVICE_LEASE_SECONDS;
+}
 
 interface BindDeviceParams {
   db: Client;
@@ -12,6 +31,7 @@ interface BindDeviceParams {
   ipAddress: string;
   now: number;
   deviceLimit: number;
+  deviceLeaseSeconds?: number;
   rejectBlocked: boolean;
 }
 
@@ -49,13 +69,20 @@ export async function bindDeviceWithinLimit({
   ipAddress,
   now,
   deviceLimit,
+  deviceLeaseSeconds = DEFAULT_DEVICE_LEASE_SECONDS,
   rejectBlocked,
 }: BindDeviceParams): Promise<BindDeviceResult> {
+  const staleBefore = now - deviceLeaseSeconds * 1000;
+
   for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt++) {
     let transaction: Transaction | undefined;
 
     try {
       transaction = await db.transaction("write");
+      await transaction.execute({
+        sql: "UPDATE devices SET status = 'logged_out' WHERE license_id = ? AND status = 'active' AND last_ping_at <= ?",
+        args: [licenseId, staleBefore],
+      });
       const existingResult = await transaction.execute({
         sql: "SELECT id, status FROM devices WHERE license_id = ? AND hwid = ? LIMIT 1",
         args: [licenseId, hwid],

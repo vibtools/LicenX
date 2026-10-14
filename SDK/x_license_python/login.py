@@ -36,6 +36,15 @@ class LoginManager:
         self.communicator = communicator
         self.storage = storage
 
+    def _release_binding_best_effort(self, license_key: str, hwid: str) -> None:
+        try:
+            released = self.communicator.send_logout(license_key, hwid)
+        except Exception:
+            released = False
+
+        if not released:
+            print("[VCON-SDK] Warning: Could not release device binding after local validation rejection")
+
     def login(self, license_key: str, pin: Optional[str] = None) -> LoginResult:
         """
         Performs full online authentication against license server.
@@ -63,6 +72,8 @@ class LoginManager:
         if not is_valid:
             error_msg = data.get("message") or data.get("error") or "Authentication rejected"
             error_code = data.get("code") or "AUTH_REJECTED"
+            if error_code == "SIGNATURE_FAILED":
+                self._release_binding_best_effort(normalized_key, hwid)
             return LoginResult(
                 success=False,
                 status_code=status_code,
@@ -75,6 +86,7 @@ class LoginManager:
         # Anti-Clock Rollback verification
         server_time = data.get("server_time", 0)
         if OfflineGuard.is_clock_tampered(server_time):
+            self._release_binding_best_effort(normalized_key, hwid)
             return LoginResult(
                 success=False,
                 status_code=403,

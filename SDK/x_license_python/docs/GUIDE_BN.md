@@ -109,6 +109,7 @@ pip install -r requirements.txt
   "display_name": "My Desktop Pro",
   "min_version": "1.0.0",
   "ping_interval_seconds": 1200,
+  "offline_grace_seconds": 0,
   "auto_logout_on_exit": true,
   "request_timeout_seconds": 15,
   "auto_login_enabled": true,
@@ -120,6 +121,8 @@ pip install -r requirements.txt
 ```
 
 `public_key_pem` লাইসেন্স authorization-এর জন্য বাধ্যতামূলক trust anchor; এটি optional convenience নয়। Admin Panel থেকে download করা application config-এর public key trusted channel দিয়ে client-এ provision করুন। Validation response বা unauthenticated `/v1/public-key` response থেকে প্রথম trusted key নেবেন না। Field অনুপস্থিত বা খালি থাকলে SDK license validation reject করবে।
+
+Admin Panel-এর Edit Application থেকে `ping_interval_seconds` (৬০–১,২০০; default ১,২০০) এবং `offline_grace_seconds` (০–৩,৬০০; default ০) app অনুযায়ী সেট করা যায়; এগুলো downloaded config-এ যায়। App-scoped license-এর server-owned device lease default ৭,২০০ সেকেন্ড (২ ঘণ্টা); global license fixed ২ ঘণ্টাই ব্যবহার করে। Local client config বদলে server lease বাড়ানো যায় না।
 
 Remote `server_url` অবশ্যই HTTPS হতে হবে। Local development/testing-এর জন্য explicit localhost বা loopback IP endpoint-এ শুধু HTTP ব্যবহার করা যাবে (যেমন, `http://127.0.0.1:3000`)। License credential পাঠানোর আগে SDK remote HTTP URL reject করে এবং HTTPS-এর standard TLS certificate verification বন্ধ করে না।
 
@@ -241,11 +244,14 @@ Login-এ device binding-এর জন্য প্রয়োজনীয় HWID �
 
 সফলভাবে লগইন হওয়ার পর SDK একটি হালকা ব্যাকগ্রাউন্ড থ্রেড চালু করে:
 
-- এটি প্রতি ২০ মিনিটে একবার সার্ভারকে পিং করে চেক করে লাইসেন্সটি এখনো বৈধ কি না।
+- Default-এ প্রতি ২০ মিনিটে server check হয়; `ping_interval_seconds` দিয়ে ৬০–১,২০০ সেকেন্ডের মধ্যে সেট করা যায়।
 - ইউআই থ্রেড বা মূল অ্যাপ্লিকেশনের পারফরম্যান্সে কোনো প্রভাব ফেলে না।
 - প্রতিটি heartbeat-এ নতুন random nonce পাঠানো হয়। সার্ভার response sign করে; SDK configured `public_key_pem` দিয়ে signature যাচাই করে এবং nonce মিলিয়ে দেখে।
-- **Fail-closed policy:** কোনো offline grace নেই। Timeout, network error, non-success/malformed response, signature failure বা nonce mismatch হলে local access সঙ্গে সঙ্গে invalid হবে।
-- সার্ভার revocation/unbind এবং authenticate করা যায়নি এমন যেকোনো heartbeat-এ legacy `on_license_revoked` callback চলে; callback-টি শুধু admin revocation-এর জন্য নয়, connectivity/signature failure-এও চলতে পারে।
+- **Offline grace:** `offline_grace_seconds` default `0` (fail-closed), সীমা ০–৩,৬০০ সেকেন্ড। Positive value হলে প্রথম transient network/service failure detect হওয়ার পর চলমান session ওই সময় পর্যন্ত থাকবে; valid signed heartbeat এলে timer reset হবে।
+- **তাৎক্ষণিক invalidation:** Server-এর explicit revoke/deny, malformed response, invalid signature, nonce mismatch বা TLS verification failure-এ grace প্রযোজ্য নয়; access সঙ্গে সঙ্গে বন্ধ হবে।
+- `enable_background_heartbeat` বন্ধ করলে automatic revoke check ও grace-expiry enforcement বন্ধ থাকে; automatic detection SLA প্রযোজ্য নয়।
+- **Device lease:** Server heartbeat সফল হলে binding renew করে। Lease expire হলে পরের heartbeat reject হয় এবং current session বন্ধ হয়। নতুন login-এ server verification বাধ্যতামূলক; slot খালি থাকলে অন্য device bind করতে পারে।
+- Legacy `on_license_revoked` callback কেবল session invalidated হলে চলে; grace চলাকালীন transient failure-এ নয়।
 
 ```python
 def handle_revocation(reason: str):
@@ -257,14 +263,16 @@ client = XLicenseClient(on_license_revoked=handle_revocation)
 ```
 
 হার্টবিট ব্যর্থতার নীতি:
-ম্যানুয়াল `client.ping()`-ও signed challenge যাচাই করে; ব্যর্থ হলে active SDK session invalid করে। Initial validation response-এর legacy grace field Python SDK-কে heartbeat offline grace দেয় না।
+ম্যানুয়াল `client.ping()`-ও signed challenge যাচাই করে এবং configured offline grace policy মেনে চলে। Initial validation response-এর legacy grace field Python SDK-র offline grace নিয়ন্ত্রণ করে না।
 
 যেকোনো সময় ম্যানুয়ালি পিং চেক করতে:
 
 ```python
 ping_status = client.ping()
 if not ping_status.get("valid"):
-    print("লাইসেন্স এখন আর সক্রিয় নেই!")
+    print("লাইসেন্স যাচাই করা যায়নি:", ping_status.get("message"))
+    if not client.is_authenticated():
+        print("লাইসেন্স সেশন বন্ধ হয়েছে")
 ```
 
 ---

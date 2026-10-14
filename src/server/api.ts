@@ -4,28 +4,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  canonicalJson,
-  createSessionToken,
-  generateAdminApiKey,
-  generateLicenseKey,
-  generateLicensePin,
-  generateRSAKeyPair,
-  hashAdminApiSecret,
-  hashPassword,
-  signPayload,
-  verifyPassword,
-  verifySessionToken,
-} from "./crypto.js";
-import { getDbClient, isTursoPlaceholder } from "./db.js";
-import { bindDeviceWithinLimit } from "./deviceBinding.js";
-import { isPublicAccessEnabled } from "./publicAccessSettings.js";
-import { getR2Object, R2Config, testR2Connection, uploadToR2 } from "./r2.js";
-import {
-  clearUserControlPinAttempts,
-  getUserControlPinRateLimit,
-  recordFailedUserControlPinAttempt,
-} from "./userControlRateLimit.js";
-import {
   ADMIN_CSRF_COOKIE,
   ADMIN_SESSION_COOKIE,
   clearAdminSessionCookie,
@@ -40,6 +18,37 @@ import {
   getAdminLoginRateLimit,
   recordFailedAdminLoginAttempt,
 } from "./adminLoginRateLimit.js";
+import {
+  canonicalJson,
+  createSessionToken,
+  generateAdminApiKey,
+  generateLicenseKey,
+  generateLicensePin,
+  generateRSAKeyPair,
+  hashAdminApiSecret,
+  hashPassword,
+  signPayload,
+  verifyPassword,
+  verifySessionToken,
+} from "./crypto.js";
+import { getDbClient, isTursoPlaceholder } from "./db.js";
+import {
+  bindDeviceWithinLimit,
+  getDeviceLeaseSeconds,
+} from "./deviceBinding.js";
+import {
+  DEFAULT_DEVICE_LEASE_SECONDS,
+  DEFAULT_OFFLINE_GRACE_SECONDS,
+  DEFAULT_PING_INTERVAL_SECONDS,
+  isValidAppLicensePolicy,
+} from "./licensePolicy.js";
+import { isPublicAccessEnabled } from "./publicAccessSettings.js";
+import { getR2Object, R2Config, testR2Connection, uploadToR2 } from "./r2.js";
+import {
+  clearUserControlPinAttempts,
+  getUserControlPinRateLimit,
+  recordFailedUserControlPinAttempt,
+} from "./userControlRateLimit.js";
 const archiver = (archiverModule as any).default || archiverModule;
 const SAFE_SERVER_ERROR = "Internal server error";
 
@@ -60,10 +69,10 @@ function adminRequestUrl(req: Request): string {
 function isBrowserRequest(req: Request): boolean {
   return Boolean(
     req.headers.origin ||
-      req.headers["sec-fetch-site"] ||
-      req.headers["x-csrf-token"] ||
-      getCookieValue(req.headers.cookie, ADMIN_CSRF_COOKIE) ||
-      getCookieValue(req.headers.cookie, ADMIN_SESSION_COOKIE),
+    req.headers["sec-fetch-site"] ||
+    req.headers["x-csrf-token"] ||
+    getCookieValue(req.headers.cookie, ADMIN_CSRF_COOKIE) ||
+    getCookieValue(req.headers.cookie, ADMIN_SESSION_COOKIE),
   );
 }
 
@@ -89,7 +98,10 @@ async function requireAdminAuth(
 ): Promise<void> {
   try {
     const authHeader = req.headers.authorization;
-    const cookieToken = getCookieValue(req.headers.cookie, ADMIN_SESSION_COOKIE);
+    const cookieToken = getCookieValue(
+      req.headers.cookie,
+      ADMIN_SESSION_COOKIE,
+    );
     const useCookie = !authHeader && Boolean(cookieToken);
     const token = authHeader?.startsWith("Bearer ")
       ? authHeader.slice(7).trim()
@@ -220,7 +232,9 @@ apiRouter.post("/setup/init", async (req: Request, res: Response) => {
     }
 
     if (typeof password !== "string" || password.length < 12) {
-      res.status(400).json({ error: "Password must be at least 12 characters" });
+      res
+        .status(400)
+        .json({ error: "Password must be at least 12 characters" });
       return;
     }
 
@@ -311,7 +325,9 @@ apiRouter.post("/auth/login", async (req: Request, res: Response) => {
     const currentLimit = await getAdminLoginRateLimit(db, attemptKey);
     if (currentLimit.blocked) {
       res.setHeader("Retry-After", String(currentLimit.retryAfterSeconds));
-      res.status(429).json({ error: "Too many login attempts. Try again later." });
+      res
+        .status(429)
+        .json({ error: "Too many login attempts. Try again later." });
       return;
     }
 
@@ -325,9 +341,11 @@ apiRouter.post("/auth/login", async (req: Request, res: Response) => {
       if (limit.blocked) {
         res.setHeader("Retry-After", String(limit.retryAfterSeconds));
       }
-      res
-        .status(limit.blocked ? 429 : 401)
-        .json({ error: limit.blocked ? "Too many login attempts. Try again later." : "Invalid credentials" });
+      res.status(limit.blocked ? 429 : 401).json({
+        error: limit.blocked
+          ? "Too many login attempts. Try again later."
+          : "Invalid credentials",
+      });
       return;
     }
 
@@ -339,9 +357,11 @@ apiRouter.post("/auth/login", async (req: Request, res: Response) => {
       if (limit.blocked) {
         res.setHeader("Retry-After", String(limit.retryAfterSeconds));
       }
-      res
-        .status(limit.blocked ? 429 : 401)
-        .json({ error: limit.blocked ? "Too many login attempts. Try again later." : "Invalid credentials" });
+      res.status(limit.blocked ? 429 : 401).json({
+        error: limit.blocked
+          ? "Too many login attempts. Try again later."
+          : "Invalid credentials",
+      });
       return;
     }
 
@@ -398,7 +418,9 @@ apiRouter.post(
         newPassword !== undefined &&
         (typeof newPassword !== "string" || newPassword.length < 12)
       ) {
-        res.status(400).json({ error: "Password must be at least 12 characters" });
+        res
+          .status(400)
+          .json({ error: "Password must be at least 12 characters" });
         return;
       }
       const db = getDbClient();
@@ -595,6 +617,9 @@ apiRouter.post(
           status: "active",
           app_secret: appSecret,
           description,
+          device_lease_seconds: DEFAULT_DEVICE_LEASE_SECONDS,
+          ping_interval_seconds: DEFAULT_PING_INTERVAL_SECONDS,
+          offline_grace_seconds: DEFAULT_OFFLINE_GRACE_SECONDS,
           created_at: now,
           updated_at: now,
           licenses_count: 0,
@@ -612,7 +637,15 @@ apiRouter.patch(
   async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { display_name, min_version, status, description } = req.body;
+      const {
+        display_name,
+        min_version,
+        status,
+        description,
+        device_lease_seconds,
+        ping_interval_seconds,
+        offline_grace_seconds,
+      } = req.body;
       const db = getDbClient();
 
       const fields: string[] = [];
@@ -633,6 +666,56 @@ apiRouter.patch(
       if (description !== undefined) {
         fields.push("description = ?");
         args.push(description ? description.trim() : null);
+      }
+
+      const policyFieldsProvided =
+        device_lease_seconds !== undefined ||
+        ping_interval_seconds !== undefined ||
+        offline_grace_seconds !== undefined;
+      if (policyFieldsProvided) {
+        const current = await db.execute({
+          sql: "SELECT device_lease_seconds, ping_interval_seconds, offline_grace_seconds FROM apps WHERE id = ? LIMIT 1",
+          args: [id],
+        });
+        if (current.rows.length === 0) {
+          res.status(404).json({ error: "App not found" });
+          return;
+        }
+
+        const policy = {
+          device_lease_seconds:
+            device_lease_seconds !== undefined
+              ? device_lease_seconds
+              : Number(current.rows[0].device_lease_seconds),
+          ping_interval_seconds:
+            ping_interval_seconds !== undefined
+              ? ping_interval_seconds
+              : Number(current.rows[0].ping_interval_seconds),
+          offline_grace_seconds:
+            offline_grace_seconds !== undefined
+              ? offline_grace_seconds
+              : Number(current.rows[0].offline_grace_seconds),
+        };
+        if (!isValidAppLicensePolicy(policy)) {
+          res.status(400).json({
+            error:
+              "Device lease must exceed heartbeat interval, offline grace, and heartbeat timeout; interval must be 60-1200 seconds and grace 0-3600 seconds",
+          });
+          return;
+        }
+
+        if (device_lease_seconds !== undefined) {
+          fields.push("device_lease_seconds = ?");
+          args.push(device_lease_seconds);
+        }
+        if (ping_interval_seconds !== undefined) {
+          fields.push("ping_interval_seconds = ?");
+          args.push(ping_interval_seconds);
+        }
+        if (offline_grace_seconds !== undefined) {
+          fields.push("offline_grace_seconds = ?");
+          args.push(offline_grace_seconds);
+        }
       }
 
       if (fields.length === 0) {
@@ -757,6 +840,13 @@ apiRouter.get(
         app_name: app.app_slug,
         display_name: app.display_name,
         min_version: app.min_version,
+        ping_interval_seconds: Number(
+          app.ping_interval_seconds ?? DEFAULT_PING_INTERVAL_SECONDS,
+        ),
+        offline_grace_seconds: Number(
+          app.offline_grace_seconds ?? DEFAULT_OFFLINE_GRACE_SECONDS,
+        ),
+        enable_background_heartbeat: true,
         public_key_pem: publicKeyPem,
         generated_at: new Date().toISOString(),
       };
@@ -1995,6 +2085,7 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
     }
 
     const deviceLimit = Number(license.device_limit);
+    const deviceLeaseSeconds = await getDeviceLeaseSeconds(db, license.app_id);
     const binding = await bindDeviceWithinLimit({
       db,
       licenseId: license.id as string,
@@ -2005,6 +2096,7 @@ apiRouter.post("/v1/license/validate", async (req: Request, res: Response) => {
       ipAddress: ip,
       now,
       deviceLimit,
+      deviceLeaseSeconds,
       rejectBlocked: true,
     });
 
@@ -2105,7 +2197,7 @@ apiRouter.post("/v1/license/ping", async (req: Request, res: Response) => {
     const now = Date.now();
 
     const licRes = await db.execute({
-      sql: "SELECT id, status, expires_at FROM licenses WHERE key = ? LIMIT 1",
+      sql: "SELECT id, status, expires_at, app_id FROM licenses WHERE key = ? LIMIT 1",
       args: [license_key.trim().toUpperCase()],
     });
 
@@ -2139,9 +2231,12 @@ apiRouter.post("/v1/license/ping", async (req: Request, res: Response) => {
       return;
     }
 
+    const deviceLeaseSeconds = await getDeviceLeaseSeconds(db, license.app_id);
+    const staleBefore = now - deviceLeaseSeconds * 1000;
+
     // Check if device is still bound and active on this license
     const devCheck = await db.execute({
-      sql: "SELECT id, status FROM devices WHERE license_id = ? AND hwid = ? LIMIT 1",
+      sql: "SELECT id, status, last_ping_at FROM devices WHERE license_id = ? AND hwid = ? LIMIT 1",
       args: [license.id as string, hwid],
     });
 
@@ -2154,6 +2249,20 @@ apiRouter.post("/v1/license/ping", async (req: Request, res: Response) => {
       return;
     }
 
+    if (Number(devCheck.rows[0].last_ping_at) <= staleBefore) {
+      await db.execute({
+        sql: "UPDATE devices SET status = 'logged_out' WHERE license_id = ? AND hwid = ? AND status = 'active' AND last_ping_at <= ?",
+        args: [license.id as string, hwid, staleBefore],
+      });
+      res.status(403).json({
+        valid: false,
+        code: "DEVICE_LEASE_EXPIRED",
+        message:
+          "Device lease expired; log in again to revalidate this license",
+      });
+      return;
+    }
+
     const configResult = await db.execute(
       "SELECT ed25519_private_key FROM admin_config LIMIT 1",
     );
@@ -2162,10 +2271,18 @@ apiRouter.post("/v1/license/ping", async (req: Request, res: Response) => {
       return;
     }
 
-    await db.execute({
-      sql: "UPDATE devices SET last_ping_at = ? WHERE license_id = ? AND hwid = ?",
-      args: [now, license.id as string, hwid],
+    const renewed = await db.execute({
+      sql: "UPDATE devices SET last_ping_at = ? WHERE license_id = ? AND hwid = ? AND status = 'active' AND last_ping_at > ?",
+      args: [now, license.id as string, hwid, staleBefore],
     });
+    if (Number(renewed.rowsAffected) === 0) {
+      res.status(403).json({
+        valid: false,
+        code: "DEVICE_UNBOUND",
+        message: "Device binding is no longer active",
+      });
+      return;
+    }
 
     const signedData: Record<string, unknown> = {
       valid: true,

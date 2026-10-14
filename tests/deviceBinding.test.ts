@@ -1,7 +1,11 @@
 import { createClient, type Client } from "@libsql/client";
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
-import { bindDeviceWithinLimit } from "../src/server/deviceBinding.js";
+import {
+  bindDeviceWithinLimit,
+  getDeviceLeaseSeconds,
+} from "../src/server/deviceBinding.js";
+import { isValidAppLicensePolicy } from "../src/server/licensePolicy.js";
 
 const databaseUrl = "file::memory:?cache=shared";
 let db: Client;
@@ -31,7 +35,12 @@ after(async () => {
   db.close();
 });
 
-function bind(hwid: string, deviceLimit = 1, rejectBlocked = false) {
+function bind(
+  hwid: string,
+  deviceLimit = 1,
+  rejectBlocked = false,
+  deviceLeaseSeconds = 7200,
+) {
   const requestDb = createClient({ url: databaseUrl, timeout: 25 });
   return bindDeviceWithinLimit({
     db: requestDb,
@@ -43,6 +52,7 @@ function bind(hwid: string, deviceLimit = 1, rejectBlocked = false) {
     ipAddress: "127.0.0.1",
     now: Date.now(),
     deviceLimit,
+    deviceLeaseSeconds,
     rejectBlocked,
   }).finally(() => requestDb.close());
 }
@@ -72,7 +82,8 @@ test("concurrent activations never exceed a single-device license limit", async 
 test("reactivates a logged-out device when a slot is available", async () => {
   await db.execute({
     sql: `INSERT INTO devices (id, license_id, hwid, first_bound_at, last_ping_at, status)
-          VALUES ('device-old', 'license-1', 'hwid-old', 1, 1, 'logged_out')`,
+            VALUES ('device-old', 'license-1', 'hwid-old', ?, ?, 'logged_out')`,
+    args: [Date.now(), Date.now()],
   });
 
   const result = await bind("hwid-old");
@@ -96,7 +107,8 @@ test("rejects logged-out device reactivation when another device uses the slot",
   });
   await db.execute({
     sql: `INSERT INTO devices (id, license_id, hwid, first_bound_at, last_ping_at, status)
-          VALUES ('device-active', 'license-1', 'hwid-active', 1, 1, 'active')`,
+          VALUES ('device-active', 'license-1', 'hwid-active', ?, ?, 'active')`,
+    args: [Date.now(), Date.now()],
   });
 
   const result = await bind("hwid-old");
@@ -116,7 +128,8 @@ test("rejects logged-out device reactivation when another device uses the slot",
 test("refreshes an already active device without consuming another slot", async () => {
   await db.execute({
     sql: `INSERT INTO devices (id, license_id, hwid, first_bound_at, last_ping_at, status)
-          VALUES ('device-hwid-active', 'license-1', 'hwid-active', 1, 1, 'active')`,
+          VALUES ('device-hwid-active', 'license-1', 'hwid-active', ?, ?, 'active')`,
+    args: [Date.now(), Date.now()],
   });
 
   const result = await bind("hwid-active");
@@ -126,6 +139,72 @@ test("refreshes an already active device without consuming another slot", async 
     activeDevicesCount: 1,
     boundDevicesCount: 1,
   });
+});
+
+test("releases stale active bindings before enforcing the device limit", async () => {
+  await db.execute({
+    sql: `INSERT INTO devices (id, license_id, hwid, first_bound_at, last_ping_at, status)
+          VALUES ('stale-device', 'license-1', 'hwid-stale', 1, 1, 'active')`,
+  });
+
+  const result = await bind("hwid-new");
+
+  assert.deepEqual(result, {
+    status: "bound",
+    existingDevice: false,
+    activeDevicesCount: 0,
+    boundDevicesCount: 1,
+  });
+  const rows = await db.execute(
+    "SELECT hwid, status FROM devices ORDER BY hwid",
+  );
+  assert.deepEqual(
+    rows.rows.map((row) => [row.hwid, row.status]),
+    [
+      ["hwid-new", "active"],
+      ["hwid-stale", "logged_out"],
+    ],
+  );
+});
+
+test("accepts default and compatible per-app lease policies only", () => {
+  assert.equal(
+    isValidAppLicensePolicy({
+      device_lease_seconds: 7200,
+      ping_interval_seconds: 1200,
+      offline_grace_seconds: 0,
+    }),
+    true,
+  );
+  assert.equal(
+    isValidAppLicensePolicy({
+      device_lease_seconds: 4811,
+      ping_interval_seconds: 1200,
+      offline_grace_seconds: 3600,
+    }),
+    true,
+  );
+  assert.equal(
+    isValidAppLicensePolicy({
+      device_lease_seconds: 4810,
+      ping_interval_seconds: 1200,
+      offline_grace_seconds: 3600,
+    }),
+    false,
+  );
+  assert.equal(
+    isValidAppLicensePolicy({
+      device_lease_seconds: 7200,
+      ping_interval_seconds: 1201,
+      offline_grace_seconds: 0,
+    }),
+    false,
+  );
+});
+
+test("uses the fixed two-hour lease for global licenses", async () => {
+  assert.equal(await getDeviceLeaseSeconds(db, null), 7200);
+  assert.equal(await getDeviceLeaseSeconds(db, undefined), 7200);
 });
 
 test("preserves Cloudflare blocked-device rejection", async () => {
@@ -150,7 +229,8 @@ test("rejects inactive-device reactivation when another device uses the slot", a
   });
   await db.execute({
     sql: `INSERT INTO devices (id, license_id, hwid, first_bound_at, last_ping_at, status)
-          VALUES ('device-active', 'license-1', 'hwid-active', 1, 1, 'active')`,
+          VALUES ('device-active', 'license-1', 'hwid-active', ?, ?, 'active')`,
+    args: [Date.now(), Date.now()],
   });
 
   const result = await bind("hwid-inactive");

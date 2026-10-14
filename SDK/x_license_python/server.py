@@ -207,7 +207,12 @@ class ServerCommunicator:
             except Exception:
                 data = None
             return status_code, self._safe_response(status_code, data)
-        except urllib.error.URLError:
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, ssl.SSLError):
+                return 495, {
+                    "error": "SSL handshake with license server failed",
+                    "code": "SSL_ERROR",
+                }
             return 503, {"error": "Cannot connect to license server", "code": "SERVER_UNREACHABLE"}
         except socket.timeout:
             return 408, {"error": "Connection to license server timed out", "code": "TIMEOUT"}
@@ -346,6 +351,18 @@ class ServerCommunicator:
                     "code": "HEARTBEAT_SIGNATURE_FAILED",
                 }
             return True, data
+        transient_codes = {
+            "SERVER_UNREACHABLE",
+            "TIMEOUT",
+            "REQUEST_ERROR",
+            "UNKNOWN_ERROR",
+            "SERVICE_UNAVAILABLE",
+        }
+        if status_code in (408, 429) or 500 <= status_code < 600:
+            if data.get("code") not in transient_codes:
+                data = {**data, "code": "SERVICE_UNAVAILABLE"}
+        elif data.get("code") in transient_codes:
+            data = {**data, "code": "INVALID_RESPONSE"}
         return False, data
 
     def send_logout(self, license_key: str, hwid: str) -> bool:

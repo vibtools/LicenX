@@ -176,3 +176,42 @@ test("heartbeat denial remains fail-closed when the device is unbound", async ()
   assert.equal(nodeResult.body.code, "DEVICE_UNBOUND");
   assert.equal(cloudflareResult.body.code, "DEVICE_UNBOUND");
 });
+
+test("Node and Cloudflare reject and release a device after its app lease expires", async () => {
+  const appId = "app-heartbeat-lease-test";
+  const appSlug = "heartbeat-lease-test";
+  const appNow = Date.now();
+  const stalePing = appNow - 1212 * 1000;
+  await db.execute({
+    sql: `INSERT INTO apps
+          (id, app_slug, display_name, app_secret, device_lease_seconds,
+           ping_interval_seconds, offline_grace_seconds, created_at, updated_at)
+          VALUES (?, ?, 'Heartbeat Lease Test', 'sec-test', 1211, 1200, 0, ?, ?)`,
+    args: [appId, appSlug, appNow, appNow],
+  });
+  await db.execute("UPDATE licenses SET app_id = ? WHERE id = ?", [
+    appId,
+    licenseId,
+  ]);
+  await db.execute("UPDATE devices SET last_ping_at = ? WHERE id = ?", [
+    stalePing,
+    deviceId,
+  ]);
+
+  const nodeResult = await pingNode("expired-node-lease");
+  assert.equal(nodeResult.status, 403);
+  assert.equal(nodeResult.body.code, "DEVICE_LEASE_EXPIRED");
+
+  await db.execute(
+    "UPDATE devices SET status = 'active', last_ping_at = ? WHERE id = ?",
+    [stalePing, deviceId],
+  );
+  const cloudflareResult = await pingCloudflare("expired-cloudflare-lease");
+  assert.equal(cloudflareResult.status, 403);
+  assert.equal(cloudflareResult.body.code, "DEVICE_LEASE_EXPIRED");
+
+  const row = await db.execute("SELECT status FROM devices WHERE id = ?", [
+    deviceId,
+  ]);
+  assert.equal(row.rows[0]?.status, "logged_out");
+});

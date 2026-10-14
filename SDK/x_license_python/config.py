@@ -10,6 +10,10 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
+MIN_PING_INTERVAL_SECONDS = 60
+MAX_PING_INTERVAL_SECONDS = 1200
+MAX_OFFLINE_GRACE_SECONDS = 3600
+
 
 @dataclass
 class SDKConfig:
@@ -19,12 +23,29 @@ class SDKConfig:
     display_name: str = "Default App"
     min_version: str = "1.0.0"
     ping_interval_seconds: int = 1200  # 20 minutes periodic verification
+    offline_grace_seconds: int = 0
     auto_logout_on_exit: bool = True
     request_timeout_seconds: int = 15
     auto_login_enabled: bool = True
     auto_save_session: bool = True
     enable_background_heartbeat: bool = True
     strict_online_only: bool = True
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.ping_interval_seconds) is not int
+            or not MIN_PING_INTERVAL_SECONDS <= self.ping_interval_seconds <= MAX_PING_INTERVAL_SECONDS
+        ):
+            raise ValueError(
+                "ping_interval_seconds must be an integer between 60 and 1200 seconds"
+            )
+        if (
+            type(self.offline_grace_seconds) is not int
+            or not 0 <= self.offline_grace_seconds <= MAX_OFFLINE_GRACE_SECONDS
+        ):
+            raise ValueError(
+                "offline_grace_seconds must be an integer between 0 and 3600 seconds"
+            )
 
     @classmethod
     def from_file(cls, config_path: Optional[str] = None) -> "SDKConfig":
@@ -79,7 +100,8 @@ class SDKConfig:
                 app_name=data.get("app_name", "vcon_default"),
                 display_name=data.get("display_name", "Default App"),
                 min_version=data.get("min_version", "1.0.0"),
-                ping_interval_seconds=int(data.get("ping_interval_seconds", 1200)),
+                ping_interval_seconds=data.get("ping_interval_seconds", 1200),
+                offline_grace_seconds=data.get("offline_grace_seconds", 0),
                 auto_logout_on_exit=bool(data.get("auto_logout_on_exit", True)),
                 request_timeout_seconds=int(data.get("request_timeout_seconds", 15)),
                 auto_login_enabled=bool(data.get("auto_login_enabled", True)),
@@ -100,6 +122,7 @@ class SDKConfig:
             "display_name": self.display_name,
             "min_version": self.min_version,
             "ping_interval_seconds": self.ping_interval_seconds,
+            "offline_grace_seconds": self.offline_grace_seconds,
             "auto_logout_on_exit": self.auto_logout_on_exit,
             "request_timeout_seconds": self.request_timeout_seconds,
             "auto_login_enabled": self.auto_login_enabled,

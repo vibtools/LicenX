@@ -35,7 +35,7 @@ class OfflineGuard:
     def check_online_policy(strict_online_only: bool = True) -> bool:
         """
         Enforces online requirement.
-        Offline logins are disallowed by design to guarantee instantaneous license revocation.
+        Offline logins are disallowed; heartbeat polling detects later revocation when enabled.
         """
         return not strict_online_only
 

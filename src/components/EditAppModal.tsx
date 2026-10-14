@@ -1,5 +1,5 @@
+import { Loader2, X } from 'lucide-react';
 import React, { useState } from 'react';
-import { X, Loader2 } from 'lucide-react';
 import { api } from '../services/apiClient';
 import { AppItem } from '../types';
 
@@ -14,6 +14,9 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
   const [minVersion, setMinVersion] = useState(app.min_version || '1.0.0');
   const [status, setStatus] = useState<'active' | 'inactive'>(app.status);
   const [description, setDescription] = useState(app.description || '');
+  const [deviceLeaseSeconds, setDeviceLeaseSeconds] = useState(app.device_lease_seconds ?? 7200);
+  const [pingIntervalSeconds, setPingIntervalSeconds] = useState(app.ping_interval_seconds ?? 1200);
+  const [offlineGraceSeconds, setOfflineGraceSeconds] = useState(app.offline_grace_seconds ?? 0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -21,6 +24,19 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
     e.preventDefault();
     if (!displayName) {
       setError('Display Name is required');
+      return;
+    }
+    if (
+      !Number.isSafeInteger(deviceLeaseSeconds) ||
+      !Number.isSafeInteger(pingIntervalSeconds) ||
+      !Number.isSafeInteger(offlineGraceSeconds) ||
+      pingIntervalSeconds < 60 ||
+      pingIntervalSeconds > 1200 ||
+      offlineGraceSeconds < 0 ||
+      offlineGraceSeconds > 3600 ||
+      deviceLeaseSeconds <= pingIntervalSeconds + offlineGraceSeconds + 10
+    ) {
+      setError('Lease must exceed heartbeat interval, offline grace, and 10-second heartbeat timeout. Interval: 60-1200s; grace: 0-3600s.');
       return;
     }
 
@@ -33,6 +49,9 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
         min_version: minVersion.trim() || '1.0.0',
         status,
         description: description.trim() || null,
+        device_lease_seconds: deviceLeaseSeconds,
+        ping_interval_seconds: pingIntervalSeconds,
+        offline_grace_seconds: offlineGraceSeconds,
       });
 
       onUpdated();
@@ -109,6 +128,50 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({ app, onClose, onUpda
               onChange={(e) => setDescription(e.target.value)}
               className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-sans focus:border-indigo-500/80 focus:outline-none"
             />
+          </div>
+
+          <div className="border-t border-slate-800 pt-3">
+            <div className="text-xs font-medium text-slate-300 mb-2">License Session Policy</div>
+            <div className="grid grid-cols-3 gap-2.5">
+              <div>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Device Lease (sec)</label>
+                <input
+                  type="number"
+                  min={pingIntervalSeconds + offlineGraceSeconds + 11}
+                  step={60}
+                  value={deviceLeaseSeconds}
+                  onChange={(e) => setDeviceLeaseSeconds(Number(e.target.value))}
+                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-mono text-xs focus:border-indigo-500/80 focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Heartbeat (sec)</label>
+                <input
+                  type="number"
+                  min={60}
+                  max={1200}
+                  step={60}
+                  value={pingIntervalSeconds}
+                  onChange={(e) => setPingIntervalSeconds(Number(e.target.value))}
+                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-mono text-xs focus:border-indigo-500/80 focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-400 block mb-1">Offline Grace (sec)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={3600}
+                  step={60}
+                  value={offlineGraceSeconds}
+                  onChange={(e) => setOfflineGraceSeconds(Number(e.target.value))}
+                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded text-slate-200 font-mono text-xs focus:border-indigo-500/80 focus:outline-none"
+                  required
+                />
+              </div>
+            </div>
           </div>
 
           <div className="pt-2 flex items-center justify-end gap-2">

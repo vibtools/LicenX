@@ -1,5 +1,6 @@
 import io
 import json
+import ssl
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -144,6 +145,20 @@ class TransportErrorRedactionTests(unittest.TestCase):
         self.assertEqual(data["code"], "LICENSE_REJECTED")
         self.assertEqual(data["error"], "License server rejected the request (HTTP 403)")
         self.assertNotIn("private backend sentinel", str(data))
+
+    def test_urllib_tls_verification_failure_is_not_reported_as_network_outage(self):
+        error = urllib.error.URLError(
+            ssl.SSLCertVerificationError("certificate verification failed")
+        )
+        with patch.object(server, "HAS_REQUESTS", False), patch.object(
+            server.urllib.request, "urlopen", side_effect=error
+        ):
+            status, data = self.communicator._http_post(
+                "https://license.example.com/test", {}, 3
+            )
+
+        self.assertEqual(status, 495)
+        self.assertEqual(data["code"], "SSL_ERROR")
 
 
 if __name__ == "__main__":

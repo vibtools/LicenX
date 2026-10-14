@@ -1,27 +1,5 @@
 import crypto from "node:crypto";
 import {
-  canonicalJson,
-  createSessionToken,
-  generateAdminApiKey,
-  generateLicenseKey,
-  generateLicensePin,
-  generateRSAKeyPair,
-  hashAdminApiSecret,
-  hashPassword,
-  signPayloadForCloudflare,
-  verifyPassword,
-  verifySessionToken,
-} from "./crypto.js";
-import { getDbClient, initDatabaseSchema, isTursoPlaceholder } from "./db.js";
-import { bindDeviceWithinLimit } from "./deviceBinding.js";
-import { isPublicAccessEnabled } from "./publicAccessSettings.js";
-import { getR2Object, R2Config, testR2Connection, uploadToR2 } from "./r2.js";
-import {
-  clearUserControlPinAttempts,
-  getUserControlPinRateLimit,
-  recordFailedUserControlPinAttempt,
-} from "./userControlRateLimit.js";
-import {
   ADMIN_CSRF_COOKIE,
   ADMIN_SESSION_COOKIE,
   clearAdminSessionCookie,
@@ -37,6 +15,37 @@ import {
   getAdminLoginRateLimit,
   recordFailedAdminLoginAttempt,
 } from "./adminLoginRateLimit.js";
+import {
+  canonicalJson,
+  createSessionToken,
+  generateAdminApiKey,
+  generateLicenseKey,
+  generateLicensePin,
+  generateRSAKeyPair,
+  hashAdminApiSecret,
+  hashPassword,
+  signPayloadForCloudflare,
+  verifyPassword,
+  verifySessionToken,
+} from "./crypto.js";
+import { getDbClient, initDatabaseSchema, isTursoPlaceholder } from "./db.js";
+import {
+  bindDeviceWithinLimit,
+  getDeviceLeaseSeconds,
+} from "./deviceBinding.js";
+import {
+  DEFAULT_DEVICE_LEASE_SECONDS,
+  DEFAULT_OFFLINE_GRACE_SECONDS,
+  DEFAULT_PING_INTERVAL_SECONDS,
+  isValidAppLicensePolicy,
+} from "./licensePolicy.js";
+import { isPublicAccessEnabled } from "./publicAccessSettings.js";
+import { getR2Object, R2Config, testR2Connection, uploadToR2 } from "./r2.js";
+import {
+  clearUserControlPinAttempts,
+  getUserControlPinRateLimit,
+  recordFailedUserControlPinAttempt,
+} from "./userControlRateLimit.js";
 
 const SAFE_SERVER_ERROR = "Internal server error";
 
@@ -502,11 +511,9 @@ export async function handleCloudflareApi(
         existingToken && /^[0-9a-f]{64}$/.test(existingToken)
           ? existingToken
           : crypto.randomBytes(32).toString("hex");
-      return jsonResponse(
-        { csrfToken },
-        200,
-        { "Set-Cookie": createAdminCsrfCookie(csrfToken) },
-      );
+      return jsonResponse({ csrfToken }, 200, {
+        "Set-Cookie": createAdminCsrfCookie(csrfToken),
+      });
     }
 
     if (normalizedPath === "/auth/logout" && method === "POST") {
@@ -516,11 +523,9 @@ export async function handleCloudflareApi(
       ) {
         return errorResponse("Invalid CSRF token", 403);
       }
-      return jsonResponse(
-        { success: true },
-        200,
-        { "Set-Cookie": clearAdminSessionCookie() },
-      );
+      return jsonResponse({ success: true }, 200, {
+        "Set-Cookie": clearAdminSessionCookie(),
+      });
     }
 
     if (normalizedPath === "/auth/login" && method === "POST") {
@@ -802,6 +807,9 @@ export async function handleCloudflareApi(
         status: "active",
         app_secret: secret,
         description: description || null,
+        device_lease_seconds: DEFAULT_DEVICE_LEASE_SECONDS,
+        ping_interval_seconds: DEFAULT_PING_INTERVAL_SECONDS,
+        offline_grace_seconds: DEFAULT_OFFLINE_GRACE_SECONDS,
         created_at: now,
         updated_at: now,
         licenses_count: 0,
@@ -851,6 +859,13 @@ export async function handleCloudflareApi(
           app_name: app.app_slug,
           display_name: app.display_name,
           min_version: app.min_version,
+          ping_interval_seconds: Number(
+            app.ping_interval_seconds ?? DEFAULT_PING_INTERVAL_SECONDS,
+          ),
+          offline_grace_seconds: Number(
+            app.offline_grace_seconds ?? DEFAULT_OFFLINE_GRACE_SECONDS,
+          ),
+          enable_background_heartbeat: true,
           public_key_pem: publicKeyPem,
           generated_at: new Date().toISOString(),
         };
@@ -868,7 +883,15 @@ export async function handleCloudflareApi(
       // PATCH /apps/:id
       if (method === "PATCH") {
         const appId = normalizedPath.replace("/apps/", "");
-        const { display_name, min_version, status, description } = body;
+        const {
+          display_name,
+          min_version,
+          status,
+          description,
+          device_lease_seconds,
+          ping_interval_seconds,
+          offline_grace_seconds,
+        } = body;
 
         const fields: string[] = [];
         const args: any[] = [];
@@ -888,6 +911,54 @@ export async function handleCloudflareApi(
         if (description !== undefined) {
           fields.push("description = ?");
           args.push(description ? description.trim() : null);
+        }
+
+        const policyFieldsProvided =
+          device_lease_seconds !== undefined ||
+          ping_interval_seconds !== undefined ||
+          offline_grace_seconds !== undefined;
+        if (policyFieldsProvided) {
+          const current = await db.execute({
+            sql: "SELECT device_lease_seconds, ping_interval_seconds, offline_grace_seconds FROM apps WHERE id = ? LIMIT 1",
+            args: [appId],
+          });
+          if (current.rows.length === 0) {
+            return errorResponse("App not found", 404);
+          }
+
+          const policy = {
+            device_lease_seconds:
+              device_lease_seconds !== undefined
+                ? device_lease_seconds
+                : Number(current.rows[0].device_lease_seconds),
+            ping_interval_seconds:
+              ping_interval_seconds !== undefined
+                ? ping_interval_seconds
+                : Number(current.rows[0].ping_interval_seconds),
+            offline_grace_seconds:
+              offline_grace_seconds !== undefined
+                ? offline_grace_seconds
+                : Number(current.rows[0].offline_grace_seconds),
+          };
+          if (!isValidAppLicensePolicy(policy)) {
+            return errorResponse(
+              "Device lease must exceed heartbeat interval, offline grace, and heartbeat timeout; interval must be 60-1200 seconds and grace 0-3600 seconds",
+              400,
+            );
+          }
+
+          if (device_lease_seconds !== undefined) {
+            fields.push("device_lease_seconds = ?");
+            args.push(device_lease_seconds);
+          }
+          if (ping_interval_seconds !== undefined) {
+            fields.push("ping_interval_seconds = ?");
+            args.push(ping_interval_seconds);
+          }
+          if (offline_grace_seconds !== undefined) {
+            fields.push("offline_grace_seconds = ?");
+            args.push(offline_grace_seconds);
+          }
         }
 
         if (fields.length === 0) {
@@ -2038,6 +2109,7 @@ export async function handleCloudflareApi(
       }
 
       const deviceLimit = Number(lic.device_limit);
+      const deviceLeaseSeconds = await getDeviceLeaseSeconds(db, lic.app_id);
       const binding = await bindDeviceWithinLimit({
         db,
         licenseId: lic.id as string,
@@ -2048,6 +2120,7 @@ export async function handleCloudflareApi(
         ipAddress: ip,
         now,
         deviceLimit,
+        deviceLeaseSeconds,
         rejectBlocked: true,
       });
 
@@ -2153,7 +2226,7 @@ export async function handleCloudflareApi(
       const now = Date.now();
 
       const licRes = await db.execute({
-        sql: "SELECT id, status, expires_at FROM licenses WHERE key = ? LIMIT 1",
+        sql: "SELECT id, status, expires_at, app_id FROM licenses WHERE key = ? LIMIT 1",
         args: [cleanKey],
       });
 
@@ -2174,8 +2247,10 @@ export async function handleCloudflareApi(
         );
       }
 
+      const deviceLeaseSeconds = await getDeviceLeaseSeconds(db, lic.app_id);
+      const staleBefore = now - deviceLeaseSeconds * 1000;
       const devCheck = await db.execute({
-        sql: "SELECT id, status FROM devices WHERE license_id = ? AND hwid = ? LIMIT 1",
+        sql: "SELECT id, status, last_ping_at FROM devices WHERE license_id = ? AND hwid = ? LIMIT 1",
         args: [lic.id as string, cleanHwid],
       });
 
@@ -2191,16 +2266,42 @@ export async function handleCloudflareApi(
         );
       }
 
+      if (Number(devCheck.rows[0].last_ping_at) <= staleBefore) {
+        await db.execute({
+          sql: "UPDATE devices SET status = 'logged_out' WHERE license_id = ? AND hwid = ? AND status = 'active' AND last_ping_at <= ?",
+          args: [lic.id as string, cleanHwid, staleBefore],
+        });
+        return jsonResponse(
+          {
+            valid: false,
+            code: "DEVICE_LEASE_EXPIRED",
+            message:
+              "Device lease expired; log in again to revalidate this license",
+          },
+          403,
+        );
+      }
+
       const configRes = await db.execute(
         "SELECT ed25519_private_key FROM admin_config LIMIT 1",
       );
       if (configRes.rows.length === 0)
         return errorResponse(SAFE_SERVER_ERROR, 503);
 
-      await db.execute({
-        sql: "UPDATE devices SET last_ping_at = ? WHERE license_id = ? AND hwid = ?",
-        args: [now, lic.id as string, cleanHwid],
+      const renewed = await db.execute({
+        sql: "UPDATE devices SET last_ping_at = ? WHERE license_id = ? AND hwid = ? AND status = 'active' AND last_ping_at > ?",
+        args: [now, lic.id as string, cleanHwid, staleBefore],
       });
+      if (Number(renewed.rowsAffected) === 0) {
+        return jsonResponse(
+          {
+            valid: false,
+            code: "DEVICE_UNBOUND",
+            message: "Device binding is no longer active",
+          },
+          403,
+        );
+      }
 
       const signedData: Record<string, unknown> = {
         valid: true,
