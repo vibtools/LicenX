@@ -1,6 +1,8 @@
+import ast
 import builtins
 import contextlib
 import io
+import re
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +12,16 @@ from x_license_python import LoginResult, SDKConfig, XLicenseClient
 
 
 class ReadmeQuickStartTests(unittest.TestCase):
+    def test_sdk_readme_python_examples_are_valid_syntax(self):
+        readme_path = Path(__file__).resolve().parents[1] / "README.md"
+        readme = readme_path.read_text(encoding="utf-8")
+        examples = re.findall(r"```python\s*\n(.*?)```", readme, flags=re.DOTALL)
+
+        self.assertTrue(examples, "Expected Python examples in the SDK README")
+        for index, example in enumerate(examples, start=1):
+            with self.subTest(example=index):
+                ast.parse(example, filename=f"SDK README example {index}")
+
     def test_basic_integration_example_matches_sdk_api(self):
         readme_path = Path(__file__).resolve().parents[3] / "README.md"
         with open(readme_path, encoding="utf-8") as readme_file:

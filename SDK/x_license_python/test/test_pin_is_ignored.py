@@ -26,7 +26,7 @@ class LicensePinSeparationTests(unittest.TestCase):
         self.assertNotIn("pin", communicator.validate_license.call_args.kwargs)
 
     def test_communicator_does_not_send_legacy_pin(self):
-        communicator = ServerCommunicator(SDKConfig())
+        communicator = ServerCommunicator(SDKConfig(app_version="1.0.0"))
         communicator._http_post = Mock(return_value=(403, {"code": "AUTH_REJECTED"}))
 
         communicator.validate_license(

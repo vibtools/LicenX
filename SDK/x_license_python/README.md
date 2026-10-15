@@ -21,7 +21,7 @@ Production-grade, modular client protection and hardware locking SDK for Python 
 | **`storage.py`**     | Disables persistent license-key storage and rejects legacy temp-file sessions; runs background heartbeats, permits only configured temporary outage grace, and immediately invalidates explicit denials or failed signed challenges. |
 | **`offline.py`**     | Enforces online-only login policy and detects system clock manipulation / rollback attacks.                                                                                                                                          |
 | **`client.py`**      | High-level facade (`XLicenseClient`) exposing clean, intuitive methods for desktop and CLI Python applications.                                                                                                                      |
-| **`example_app.py`** | Complete lifecycle demonstration application ready to test and run.                                                                                                                                                                  |
+| **`example_app.py`** | CLI lifecycle demonstration; progress output does not include the active license key.                                                                                                                                                |
 
 ---
 
@@ -48,12 +48,15 @@ Download `<app_name>_vcon_config.json` from the Admin Panel (**Applications** ta
   "app_name": "vcon_default",
   "display_name": "VCON Default Suite",
   "min_version": "1.0.0",
+  "app_version": "1.0.0",
   "ping_interval_seconds": 1200,
   "offline_grace_seconds": 0,
   "enable_background_heartbeat": true,
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwGQ8N0AkXoz/BQIXlh2F...\n-----END PUBLIC KEY-----\n"
 }
 ```
+
+`app_version` must be set by the integrator to the actual running client release. It is sent for minimum-version enforcement and is not inferred from the server's `min_version` policy.
 
 `ping_interval_seconds` accepts 60–1,200 seconds (default 1,200). `offline_grace_seconds` accepts 0–3,600 seconds (default 0, fail-closed). Positive grace applies to an already-running session after a transient outage is detected; explicit revocation, invalid signatures/nonces, and TLS failures still invalidate immediately. Disabling background heartbeat opts out of automatic revocation and grace-expiry enforcement.
 
@@ -86,12 +89,14 @@ if not res.success:
     res = client.login(key)
 
 if res.success:
-    print(f"[+] Access Granted! Tier: {client.get_tier()}")
-    print(f"[+] Hardware ID: {client.get_hwid()}")
-    print(f"[+] Background Worker: Active (Monitoring every 20 mins)")
+   print(f"[+] Access Granted! Tier: {client.get_tier()}")
+   print(f"[+] Hardware ID: {client.get_hwid()}")
+   print(f"[+] Background Worker: Active (Monitoring every 20 mins)")
 else:
-    print(f"[-] Access Denied: {res.message} (Code: {res.code})")
-    exit(1)
+   print(f"[-] Access Denied: {res.message} (Code: {res.code})")
+   if isinstance(res.request_id, str) and res.request_id.strip():
+      print(f"[i] Server Request ID: {res.request_id}")
+   exit(1)
 
 # 3. Main Application Logic
 # Auto-logout exit hooks automatically unbind the device slot when the app exits!

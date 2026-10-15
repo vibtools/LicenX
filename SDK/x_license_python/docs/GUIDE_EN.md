@@ -110,6 +110,7 @@ Download the configuration file from your **VCON Admin Panel** (**Applications T
   "app_name": "vcon_default",
   "display_name": "My Desktop Pro",
   "min_version": "1.0.0",
+  "app_version": "1.0.0",
   "ping_interval_seconds": 1200,
   "offline_grace_seconds": 0,
   "auto_logout_on_exit": true,
@@ -121,6 +122,8 @@ Download the configuration file from your **VCON Admin Panel** (**Applications T
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA...YourKeyHere...\n-----END PUBLIC KEY-----\n"
 }
 ```
+
+Set `app_version` to the actual running application release. It is distinct from the server policy `min_version`; the SDK sends the client version and fails locally before network transport if it is missing.
 
 `public_key_pem` is a required trust anchor, not an optional convenience. Use the public key from the Admin Panel's downloaded application config and deliver that config through a trusted channel. Never take the first trusted key from the validation response or an unauthenticated `/v1/public-key` response. If the field is missing or empty, license validation is rejected.
 
@@ -148,6 +151,7 @@ client = XLicenseClient(
     app_name="photo_editor_pro",
     server_url="https://license.mycompany.com",
     public_key_pem=TRUSTED_SERVER_PUBLIC_KEY_PEM,
+    app_version="2.4.1",          # Actual application release
     ping_interval_seconds=1200,   # 20 minutes
     auto_logout_on_exit=True,     # Free device slot on app close
     auto_save_session=True,       # Retained for compatibility; persistence is currently disabled
@@ -482,15 +486,18 @@ if __name__ == "__main__":
 
 ### `LoginResult` Dataclass
 
-| Attribute      | Type             | Description                                                                   |
-| -------------- | ---------------- | ----------------------------------------------------------------------------- |
-| `success`      | `bool`           | `True` if authentication succeeded and license is active.                     |
-| `status_code`  | `int`            | HTTP response code (e.g., `200`, `403`, `404`, `426`).                        |
-| `message`      | `str`            | Human-readable explanation from server.                                       |
-| `code`         | `str`            | Programmatic error code (e.g. `OK`, `KEY_NOT_FOUND`, `DEVICE_LIMIT_REACHED`). |
-| `hwid`         | `Optional[str]`  | The machine HWID that was authenticated.                                      |
-| `license_key`  | `Optional[str]`  | The normalized license key string.                                            |
-| `license_data` | `Optional[Dict]` | Verified payload containing tier, expiry, limits, etc.                        |
+| Attribute      | Type             | Description                                                                     |
+| -------------- | ---------------- | ------------------------------------------------------------------------------- |
+| `success`      | `bool`           | `True` if authentication succeeded and license is active.                       |
+| `status_code`  | `int`            | HTTP response code (e.g., `200`, `403`, `404`, `426`).                          |
+| `message`      | `str`            | Human-readable explanation from server.                                         |
+| `code`         | `str`            | Programmatic error code (e.g. `OK`, `KEY_NOT_FOUND`, `DEVICE_LIMIT_REACHED`).   |
+| `hwid`         | `Optional[str]`  | The machine HWID that was authenticated.                                        |
+| `license_key`  | `Optional[str]`  | The normalized license key string.                                              |
+| `license_data` | `Optional[Dict]` | Verified payload containing tier, expiry, limits, etc.                          |
+| `request_id`   | `Optional[str]`  | Safe UUID-shaped correlation ID on eligible failed responses; support use only. |
+
+The SDK sanitizer discards malformed IDs and backend diagnostics. A `request_id` helps support correlate a failed request; it does not authorize access. Never include the license key in logs.
 
 ---
 

@@ -23,6 +23,7 @@ class LoginResult:
     license_data: Optional[Dict[str, Any]] = None
     hwid: Optional[str] = None
     license_key: Optional[str] = None
+    request_id: Optional[str] = None
 
 
 class LoginManager:
@@ -72,6 +73,7 @@ class LoginManager:
         if not is_valid:
             error_msg = data.get("message") or data.get("error") or "Authentication rejected"
             error_code = data.get("code") or "AUTH_REJECTED"
+            request_id = data.get("request_id")
             if error_code == "SIGNATURE_FAILED":
                 self._release_binding_best_effort(normalized_key, hwid)
             return LoginResult(
@@ -81,6 +83,7 @@ class LoginManager:
                 code=error_code,
                 hwid=hwid,
                 license_key=normalized_key,
+                request_id=request_id if isinstance(request_id, str) else None,
             )
 
         # Anti-Clock Rollback verification

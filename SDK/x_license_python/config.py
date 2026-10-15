@@ -30,6 +30,7 @@ class SDKConfig:
     auto_save_session: bool = True
     enable_background_heartbeat: bool = True
     strict_online_only: bool = True
+    app_version: Optional[str] = None
 
     def __post_init__(self) -> None:
         if (
@@ -100,6 +101,7 @@ class SDKConfig:
                 app_name=data.get("app_name", "vcon_default"),
                 display_name=data.get("display_name", "Default App"),
                 min_version=data.get("min_version", "1.0.0"),
+                app_version=data.get("app_version"),
                 ping_interval_seconds=data.get("ping_interval_seconds", 1200),
                 offline_grace_seconds=data.get("offline_grace_seconds", 0),
                 auto_logout_on_exit=bool(data.get("auto_logout_on_exit", True)),
@@ -121,6 +123,7 @@ class SDKConfig:
             "app_name": self.app_name,
             "display_name": self.display_name,
             "min_version": self.min_version,
+            "app_version": self.app_version,
             "ping_interval_seconds": self.ping_interval_seconds,
             "offline_grace_seconds": self.offline_grace_seconds,
             "auto_logout_on_exit": self.auto_logout_on_exit,

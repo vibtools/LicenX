@@ -1,21 +1,29 @@
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from x_license_python.client import XLicenseClient
 from x_license_python.config import SDKConfig
 from x_license_python.device import DeviceManager
 from x_license_python.login import LoginManager
 from x_license_python.server import ServerCommunicator
 from x_license_python.test.app import (
-    DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS,
     DiagnosticEngine,
+    admin_logout_observation_timeout_ms,
     create_diagnostic_client,
+    get_live_target_environment,
     is_admin_device_logout_reason,
     load_live_config,
+    MissingClientVersionError,
     record_session_revocation,
+    run_cli_mode,
 )
+from x_license_python.test import app as diagnostic_app
 
 
 PUBLIC_KEY = "-----BEGIN PUBLIC KEY-----\ntest-key\n-----END PUBLIC KEY-----"
@@ -25,13 +33,26 @@ class LiveConfigTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.config_path = os.path.join(self.temp_dir.name, "live_vcon_config.json")
+        self.staging_hosts_patcher = patch.dict(
+            os.environ,
+            {"LICENX_STAGING_HOSTS": "staging.licenx.com"},
+        )
+        self.staging_hosts_patcher.start()
+        self.production_hosts_patcher = patch.dict(
+            os.environ,
+            {"LICENX_PRODUCTION_TEST_HOSTS": ""},
+        )
+        self.production_hosts_patcher.start()
         self.config_data = {
             "server_url": "https://staging.licenx.com",
             "public_key_pem": PUBLIC_KEY,
             "app_name": "vcon_default",
+            "app_version": "2.4.1",
         }
 
     def tearDown(self):
+        self.production_hosts_patcher.stop()
+        self.staging_hosts_patcher.stop()
         self.temp_dir.cleanup()
 
     def write_config(self, data):
@@ -45,7 +66,93 @@ class LiveConfigTests(unittest.TestCase):
 
         self.assertEqual(config.server_url, "https://staging.licenx.com")
         self.assertEqual(config.app_name, "vcon_default")
+        self.assertEqual(config.app_version, "2.4.1")
         self.assertEqual(config.public_key_pem, PUBLIC_KEY)
+
+    def test_admin_download_config_requires_operator_version_without_using_minimum(self):
+        self.write_config(
+            {
+                **{key: value for key, value in self.config_data.items() if key != "app_version"},
+                "min_version": "5.0.0",
+            }
+        )
+
+        with self.assertRaises(MissingClientVersionError):
+            load_live_config(self.config_path)
+
+        config = load_live_config(self.config_path, app_version_override="2.4.1")
+
+        self.assertEqual(config.app_version, "2.4.1")
+        self.assertEqual(config.min_version, "5.0.0")
+
+    def test_app_version_round_trips_and_client_constructor_accepts_override(self):
+        config = SDKConfig(app_version="2.4.1")
+        exported_path = os.path.join(self.temp_dir.name, "exported.json")
+
+        config.export_to_file(exported_path)
+        restored = SDKConfig.from_file(exported_path)
+        discovered_config = SDKConfig(
+            server_url="https://configured.example",
+            app_version="1.0.0",
+        )
+        with patch.object(
+            SDKConfig,
+            "from_file",
+            return_value=discovered_config,
+        ) as config_loader:
+            client = XLicenseClient(app_version="3.0.0")
+
+        self.assertEqual(restored.app_version, "2.4.1")
+        config_loader.assert_called_once_with(None)
+        self.assertEqual(client.config.server_url, "https://configured.example")
+        self.assertEqual(client.config.app_version, "3.0.0")
+
+    def test_requires_an_explicit_staging_host_allowlist(self):
+        self.write_config(self.config_data)
+
+        with patch.dict(os.environ, {"LICENX_STAGING_HOSTS": ""}):
+            with self.assertRaisesRegex(ValueError, "LICENX_STAGING_HOSTS"):
+                load_live_config(self.config_path)
+
+    def test_rejects_a_public_host_outside_the_staging_allowlist(self):
+        self.write_config(
+            {**self.config_data, "server_url": "https://vibid.my"}
+        )
+
+        with self.assertRaisesRegex(ValueError, "allowlisted hostnames"):
+            load_live_config(self.config_path)
+
+    def test_staging_allowlist_matches_case_and_trailing_dot_insensitively(self):
+        self.write_config(
+            {**self.config_data, "server_url": "https://STAGING.LicenX.com."}
+        )
+
+        config = load_live_config(self.config_path)
+
+        self.assertEqual(config.app_name, "vcon_default")
+
+    def test_production_host_requires_its_separate_exact_allowlist(self):
+        self.write_config(
+            {**self.config_data, "server_url": "https://vibid.my"}
+        )
+
+        with self.assertRaisesRegex(ValueError, "allowlisted hostnames"):
+            load_live_config(self.config_path)
+
+    def test_loads_and_classifies_explicitly_allowlisted_production_host(self):
+        self.write_config(
+            {**self.config_data, "server_url": "https://vibid.my"}
+        )
+
+        with patch.dict(
+            os.environ,
+            {"LICENX_PRODUCTION_TEST_HOSTS": "VIBID.MY."},
+        ):
+            config = load_live_config(self.config_path)
+            target_environment = get_live_target_environment(config.server_url)
+
+        self.assertEqual(target_environment, "production")
+        self.assertEqual(config.server_url, "https://vibid.my")
 
     def test_requires_an_existing_explicit_config_file(self):
         with self.assertRaises(ValueError):
@@ -82,6 +189,7 @@ class LiveConfigTests(unittest.TestCase):
     def test_requires_app_scope_and_trusted_public_pem(self):
         for override in (
             {"app_name": ""},
+            {"app_version": ""},
             {"public_key_pem": ""},
             {"public_key_pem": "demo-key"},
         ):
@@ -212,11 +320,37 @@ class LiveConfigTests(unittest.TestCase):
             client=client,
             live_config_loaded=True,
         )
+        engine.logs.append("accidental key in diagnostics: VCON-LIVE-SECRET-KEY")
 
         report = engine.generate_report_text()
 
         self.assertNotIn("VCON-LIVE-SECRET-KEY", report)
-        self.assertIn("VCON-LIV***", report)
+        self.assertNotIn("VCON-LIV", report)
+        self.assertIn("Active Session  : Active (redacted)", report)
+        self.assertIn("Diagnostic Scope: Python SDK and its configured public endpoints only", report)
+        self.assertIn("Readiness       : NOT CERTIFIED", report)
+        self.assertIn("Heartbeat       : 1200s; background enabled", report)
+        self.assertIn("Offline Grace   : 0s", report)
+
+    def test_successful_license_validation_detail_does_not_expose_key_prefix(self):
+        client = Mock()
+        client.get_current_key.return_value = "VCON-LIVE-SECRET-KEY"
+        engine = DiagnosticEngine(
+            config=SDKConfig(server_url="https://staging.licenx.com"),
+            client=client,
+            live_config_loaded=True,
+        )
+        engine.communicator.validate_license.return_value = (
+            True,
+            200,
+            {"tier": "Standard", "bound_devices_count": 1, "device_limit": 2},
+        )
+
+        passed, details = engine._test_license_validation("VCON-LIVE-SECRET-KEY")
+
+        self.assertTrue(passed)
+        self.assertNotIn("VCON-LIVE", details)
+        self.assertIn("Valid! Tier: Standard", details)
 
     def test_diagnostic_report_redacts_hardware_and_host_identifiers(self):
         identifiers = {
@@ -319,7 +453,7 @@ class LiveConfigTests(unittest.TestCase):
         public_ip_lookup.assert_called_once_with()
 
     def test_validation_request_omits_nested_full_telemetry(self):
-        communicator = ServerCommunicator(SDKConfig())
+        communicator = ServerCommunicator(SDKConfig(app_version="2.4.1"))
         communicator._http_post = Mock(return_value=(400, {"error": "invalid"}))
         telemetry = {
             "device_name": "test-host",
@@ -346,13 +480,33 @@ class LiveConfigTests(unittest.TestCase):
         )
         self.assertEqual(request_body["device_name"], "test-host")
         self.assertEqual(request_body["os_info"], "Test OS")
+        self.assertEqual(request_body["app_version"], "2.4.1")
+
+    def test_missing_app_version_fails_before_http_transport(self):
+        communicator = ServerCommunicator(SDKConfig())
+        communicator._http_post = Mock()
+
+        is_valid, status, data = communicator.validate_license(
+            "VCON-TEST-KEY",
+            "test-hwid",
+            {"device_name": "test-host", "os_info": "Test OS"},
+        )
+
+        self.assertFalse(is_valid)
+        self.assertEqual(status, 400)
+        self.assertEqual(data["code"], "APP_VERSION_REQUIRED")
+        communicator._http_post.assert_not_called()
 
     def test_diagnostic_signature_request_uses_only_validation_metadata(self):
         client = Mock()
         client.get_current_key.return_value = "VCON-TEST-KEY"
         client.get_hwid.return_value = "test-hwid"
         engine = DiagnosticEngine(
-            config=SDKConfig(app_name="vcon_default", min_version="1.0.0"),
+            config=SDKConfig(
+                app_name="vcon_default",
+                min_version="1.0.0",
+                app_version="2.4.1",
+            ),
             client=client,
             live_config_loaded=True,
         )
@@ -384,19 +538,380 @@ class LiveConfigTests(unittest.TestCase):
                 "client_time",
             },
         )
+        self.assertEqual(request_body["app_version"], "2.4.1")
 
-    def test_diagnostic_client_uses_short_heartbeat_and_revocation_callback(self):
+    def test_diagnostic_client_preserves_configured_heartbeat_policy(self):
         callback = Mock()
         sentinel_client = object()
-        config = SDKConfig(ping_interval_seconds=1200, enable_background_heartbeat=False)
+        config = SDKConfig(
+            ping_interval_seconds=1200,
+            offline_grace_seconds=300,
+            enable_background_heartbeat=False,
+        )
 
         with patch("x_license_python.test.app.XLicenseClient", return_value=sentinel_client) as client_factory:
             client = create_diagnostic_client(config, callback)
 
         self.assertIs(client, sentinel_client)
-        self.assertEqual(config.ping_interval_seconds, DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS)
-        self.assertTrue(config.enable_background_heartbeat)
+        self.assertEqual(config.ping_interval_seconds, 1200)
+        self.assertEqual(config.offline_grace_seconds, 300)
+        self.assertFalse(config.enable_background_heartbeat)
         client_factory.assert_called_once_with(config=config, on_license_revoked=callback)
+
+    def test_admin_logout_timeout_uses_configured_interval_and_request_budget(self):
+        self.assertEqual(
+            admin_logout_observation_timeout_ms(
+                SDKConfig(ping_interval_seconds=60)
+            ),
+            80000,
+        )
+        self.assertEqual(
+            admin_logout_observation_timeout_ms(
+                SDKConfig(ping_interval_seconds=1200)
+            ),
+            1220000,
+        )
+
+    def test_gui_login_requires_consent_before_activation_request(self):
+        if not hasattr(diagnostic_app, "VCONTestApp"):
+            self.skipTest("Tkinter is unavailable")
+
+        client = Mock()
+        test_app = SimpleNamespace(
+            config=SDKConfig(server_url="https://staging.licenx.com"),
+            config_loaded=True,
+            ent_key=Mock(),
+            client=client,
+        )
+        test_app.ent_key.get.return_value = "VCON-TEST-KEY"
+
+        with patch(
+            "x_license_python.test.app.messagebox.askyesno",
+            return_value=False,
+        ) as confirmation:
+            diagnostic_app.VCONTestApp._handle_login(test_app)
+
+        client.login.assert_not_called()
+        self.assertIn("staging", confirmation.call_args.args[1].lower())
+        self.assertNotIn("production", confirmation.call_args.args[1].lower())
+
+    def test_gui_production_login_requires_production_confirmation(self):
+        if not hasattr(diagnostic_app, "VCONTestApp"):
+            self.skipTest("Tkinter is unavailable")
+
+        client = Mock()
+        test_app = SimpleNamespace(
+            config=SDKConfig(server_url="https://vibid.my"),
+            config_loaded=True,
+            ent_key=Mock(),
+            client=client,
+        )
+        test_app.ent_key.get.return_value = "VCON-TEST-KEY"
+
+        with patch.dict(
+            os.environ,
+            {"LICENX_PRODUCTION_TEST_HOSTS": "vibid.my"},
+        ), patch(
+            "x_license_python.test.app.messagebox.askyesno",
+            return_value=False,
+        ) as confirmation:
+            diagnostic_app.VCONTestApp._handle_login(test_app)
+
+        client.login.assert_not_called()
+        self.assertEqual(
+            confirmation.call_args.args[0],
+            "Confirm Production License Validation",
+        )
+        self.assertIn("PRODUCTION TARGET", confirmation.call_args.args[1])
+        self.assertIn("may bind this device", confirmation.call_args.args[1])
+
+    def test_gui_prompts_actual_client_version_for_admin_downloaded_config(self):
+        if not hasattr(diagnostic_app, "VCONTestApp"):
+            self.skipTest("Tkinter is unavailable")
+
+        config_data = {
+            key: value for key, value in self.config_data.items() if key != "app_version"
+        }
+        config_data["min_version"] = "5.0.0"
+        self.write_config(config_data)
+        client = Mock()
+        client.is_authenticated.return_value = False
+        test_app = SimpleNamespace(
+            client=client,
+            config=SDKConfig(),
+            config_loaded=False,
+            ent_server=Mock(),
+            ent_app_name=Mock(),
+            ent_key=Mock(),
+            lbl_target_environment=Mock(),
+            _set_config_actions_enabled=Mock(),
+            _append_log=Mock(),
+            _on_license_revoked=Mock(),
+            c_text_muted="muted",
+            c_rose="red",
+            c_emerald="green",
+        )
+
+        with patch(
+            "x_license_python.test.app.filedialog.askopenfilename",
+            return_value=self.config_path,
+        ), patch(
+            "x_license_python.test.app.simpledialog.askstring",
+            return_value="2.4.1",
+        ) as version_prompt, patch(
+            "x_license_python.test.app.create_diagnostic_client",
+            return_value=Mock(),
+        ), patch(
+            "x_license_python.test.app.DiagnosticEngine",
+            return_value=Mock(),
+        ):
+            diagnostic_app.VCONTestApp._browse_config(test_app)
+
+        self.assertTrue(test_app.config_loaded)
+        self.assertEqual(test_app.config.app_version, "2.4.1")
+        self.assertEqual(test_app.config.min_version, "5.0.0")
+        version_prompt.assert_called_once()
+
+    def test_gui_reports_unallowlisted_production_target_as_validation_error(self):
+        if not hasattr(diagnostic_app, "VCONTestApp"):
+            self.skipTest("Tkinter is unavailable")
+
+        self.write_config(
+            {**self.config_data, "server_url": "https://vibid.my"}
+        )
+        client = Mock()
+        client.is_authenticated.return_value = False
+        test_app = SimpleNamespace(
+            client=client,
+            config=SDKConfig(),
+            config_loaded=False,
+            ent_server=Mock(),
+            ent_app_name=Mock(),
+            ent_key=Mock(),
+            lbl_target_environment=Mock(),
+            _set_config_actions_enabled=Mock(),
+            _append_log=Mock(),
+            _on_license_revoked=Mock(),
+            c_text_muted="muted",
+        )
+        diagnostic_client = Mock()
+
+        with patch.dict(
+            os.environ,
+            {
+                "LICENX_PRODUCTION_TEST_HOSTS": "",
+                "LICENX_STAGING_HOSTS": "",
+            },
+        ), patch(
+            "x_license_python.test.app.filedialog.askopenfilename",
+            return_value=self.config_path,
+        ), patch(
+            "x_license_python.test.app.create_diagnostic_client",
+            return_value=diagnostic_client,
+        ), patch(
+            "x_license_python.test.app.DiagnosticEngine",
+            return_value=Mock(),
+        ), patch(
+            "x_license_python.test.app.messagebox.showerror",
+        ) as show_error:
+            diagnostic_app.VCONTestApp._browse_config(test_app)
+
+        self.assertFalse(test_app.config_loaded)
+        self.assertEqual(
+            show_error.call_args.args[0],
+            "Config or Target Validation Failed",
+        )
+        self.assertIn(
+            "LICENX_PRODUCTION_TEST_HOSTS",
+            show_error.call_args.args[1],
+        )
+        diagnostic_client.login.assert_not_called()
+
+    def test_gui_diagnostic_decline_sends_no_test_requests(self):
+        if not hasattr(diagnostic_app, "VCONTestApp"):
+            self.skipTest("Tkinter is unavailable")
+
+        client = Mock()
+        client.get_current_key.return_value = "VCON-TEST-KEY"
+        engine = Mock()
+        test_app = SimpleNamespace(
+            config=SDKConfig(server_url="https://staging.licenx.com"),
+            config_loaded=True,
+            client=client,
+            engine=engine,
+            _admin_logout_test_armed=False,
+            is_running_tests=False,
+        )
+
+        with patch(
+            "x_license_python.test.app.messagebox.askyesno",
+            return_value=False,
+        ):
+            diagnostic_app.VCONTestApp._start_diagnostic_tests(test_app)
+
+        engine.run_all_tests.assert_not_called()
+
+    def test_gui_production_diagnostics_require_production_confirmation(self):
+        if not hasattr(diagnostic_app, "VCONTestApp"):
+            self.skipTest("Tkinter is unavailable")
+
+        client = Mock()
+        client.get_current_key.return_value = "VCON-TEST-KEY"
+        engine = Mock()
+        test_app = SimpleNamespace(
+            config=SDKConfig(server_url="https://vibid.my"),
+            config_loaded=True,
+            client=client,
+            engine=engine,
+            _admin_logout_test_armed=False,
+            is_running_tests=False,
+        )
+
+        with patch.dict(
+            os.environ,
+            {"LICENX_PRODUCTION_TEST_HOSTS": "vibid.my"},
+        ), patch(
+            "x_license_python.test.app.messagebox.askyesno",
+            return_value=False,
+        ) as confirmation:
+            diagnostic_app.VCONTestApp._start_diagnostic_tests(test_app)
+
+        engine.run_all_tests.assert_not_called()
+        self.assertEqual(confirmation.call_args.args[0], "Confirm Production Diagnostics")
+        self.assertIn("all 12 SDK checks", confirmation.call_args.args[1])
+        self.assertIn("unbind", confirmation.call_args.args[1])
+
+    def test_gui_disables_live_and_config_controls_during_diagnostics(self):
+        if not hasattr(diagnostic_app, "VCONTestApp"):
+            self.skipTest("Tkinter is unavailable")
+
+        test_app = SimpleNamespace(
+            config_loaded=True,
+            config=SDKConfig(enable_background_heartbeat=True),
+            btn_load_cfg=Mock(),
+            ent_key=Mock(),
+            btn_login=Mock(),
+            btn_autologin=Mock(),
+            btn_logout=Mock(),
+            btn_run_tests=Mock(),
+            btn_admin_logout_test=Mock(),
+        )
+
+        diagnostic_app.VCONTestApp._set_diagnostic_actions_enabled(test_app, False)
+
+        for control in (
+            test_app.btn_load_cfg,
+            test_app.ent_key,
+            test_app.btn_login,
+            test_app.btn_autologin,
+            test_app.btn_logout,
+            test_app.btn_run_tests,
+            test_app.btn_admin_logout_test,
+        ):
+            self.assertEqual(control.config.call_args.kwargs["state"], "disabled")
+
+        diagnostic_app.VCONTestApp._set_diagnostic_actions_enabled(test_app, True)
+
+        for control in (
+            test_app.btn_load_cfg,
+            test_app.ent_key,
+            test_app.btn_login,
+            test_app.btn_autologin,
+            test_app.btn_logout,
+            test_app.btn_run_tests,
+            test_app.btn_admin_logout_test,
+        ):
+            self.assertEqual(control.config.call_args.kwargs["state"], "normal")
+
+    def test_cli_requires_activation_consent_before_sending_license_request(self):
+        config = SDKConfig(
+            server_url="https://staging.licenx.com",
+            app_name="vcon_default",
+            app_version="2.4.1",
+        )
+        client = Mock()
+        engine = Mock()
+
+        with patch(
+            "x_license_python.test.app.load_live_config",
+            return_value=config,
+        ), patch(
+            "x_license_python.test.app.create_diagnostic_client",
+            return_value=client,
+        ), patch(
+            "x_license_python.test.app.DiagnosticEngine",
+            return_value=engine,
+        ), patch(
+            "builtins.input",
+            side_effect=["staging.json", "NO"],
+        ), patch(
+            "x_license_python.test.app.getpass.getpass",
+            return_value="VCON-TEST-KEY",
+        ) as getpass_prompt, redirect_stdout(io.StringIO()) as output:
+            run_cli_mode()
+
+        client.login.assert_not_called()
+        engine.run_all_tests.assert_not_called()
+        getpass_prompt.assert_called_once()
+        self.assertNotIn("VCON-TEST-KEY", output.getvalue())
+
+    def test_cli_production_decline_stops_before_license_prompt(self):
+        config = SDKConfig(
+            server_url="https://vibid.my",
+            app_name="vcon_default",
+            app_version="2.4.1",
+        )
+        client = Mock()
+
+        with patch.dict(
+            os.environ,
+            {"LICENX_PRODUCTION_TEST_HOSTS": "vibid.my"},
+        ), patch(
+            "x_license_python.test.app.load_live_config",
+            return_value=config,
+        ), patch(
+            "x_license_python.test.app.create_diagnostic_client",
+            return_value=client,
+        ), patch(
+            "x_license_python.test.app.DiagnosticEngine",
+        ), patch(
+            "builtins.input",
+            side_effect=["production.json", "NO"],
+        ), patch(
+            "x_license_python.test.app.getpass.getpass",
+        ) as getpass_prompt, redirect_stdout(io.StringIO()) as output:
+            run_cli_mode()
+
+        client.login.assert_not_called()
+        getpass_prompt.assert_not_called()
+        self.assertIn("Production test cancelled before license input", output.getvalue())
+
+    def test_cli_prompts_for_missing_client_version_before_activation(self):
+        config_data = {
+            **{key: value for key, value in self.config_data.items() if key != "app_version"},
+            "min_version": "5.0.0",
+        }
+        self.write_config(config_data)
+        client = Mock()
+        engine = Mock()
+
+        with patch(
+            "builtins.input",
+            side_effect=[self.config_path, "2.4.1", "NO"],
+        ), patch(
+            "x_license_python.test.app.getpass.getpass",
+            return_value="VCON-TEST-KEY",
+        ), patch(
+            "x_license_python.test.app.create_diagnostic_client",
+            return_value=client,
+        ), patch(
+            "x_license_python.test.app.DiagnosticEngine",
+            return_value=engine,
+        ), redirect_stdout(io.StringIO()):
+            run_cli_mode()
+
+        client.login.assert_not_called()
+        engine.run_all_tests.assert_not_called()
 
     def test_admin_logout_reason_is_distinguished_from_other_revocations(self):
         self.assertTrue(

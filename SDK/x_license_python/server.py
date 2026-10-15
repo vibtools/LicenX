@@ -140,7 +140,7 @@ class ServerCommunicator:
         code = data.get("code") if isinstance(data, dict) else None
         if not isinstance(code, str) or not re.fullmatch(r"[A-Z0-9_]{1,64}", code):
             code = f"HTTP_{status_code}" if status_code >= 400 else "INVALID_RESPONSE"
-        return {
+        safe_response = {
             "error": (
                 f"License server rejected the request (HTTP {status_code})"
                 if status_code >= 400
@@ -148,6 +148,14 @@ class ServerCommunicator:
             ),
             "code": code,
         }
+        request_id = data.get("request_id") if isinstance(data, dict) else None
+        if isinstance(request_id, str) and re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            request_id,
+            re.IGNORECASE,
+        ):
+            safe_response["request_id"] = request_id
+        return safe_response
 
     def _http_post(self, url: str, json_data: Dict[str, Any], timeout: int) -> Tuple[int, Dict[str, Any]]:
         """
@@ -292,13 +300,20 @@ class ServerCommunicator:
         Returns (is_valid, http_status_code, response_payload)
         """
         url = self._build_url("api/v1/license/validate")
+        app_version = self.config.app_version
+        if not isinstance(app_version, str) or not app_version.strip():
+            return False, 400, {
+                "error": "Application version must be configured before license validation",
+                "code": "APP_VERSION_REQUIRED",
+            }
+
         body = {
             "license_key": license_key.strip().upper(),
             "hwid": hwid,
             "device_name": telemetry.get("device_name", "Unknown-PC"),
             "os_info": telemetry.get("os_info", "Generic-OS"),
             "app_name": self.config.app_name,
-            "app_version": self.config.min_version,
+            "app_version": app_version.strip(),
             "client_time": int(time.time() * 1000),
         }
 

@@ -12,10 +12,12 @@ from x_license_python.server import ServerCommunicator
 
 class _FakeResponse:
     status_code = 502
-    text = "response body secret sentinel"
+
+    def __init__(self, payload):
+        self.payload = payload
 
     def json(self):
-        return {"error": "backend detail sentinel", "code": "UPSTREAM_FAILURE"}
+        return self.payload
 
 
 class _FakeRequestsExceptions:
@@ -71,7 +73,14 @@ class TransportErrorRedactionTests(unittest.TestCase):
         )
 
     def test_requests_transport_redacts_response_errors_for_get_and_post(self):
-        fake_requests = _FakeRequests(response=_FakeResponse())
+        request_id = "74dedd91-e751-465e-a17e-6f6ceebedd8a"
+        fake_requests = _FakeRequests(response=_FakeResponse({
+            "error": "backend detail sentinel",
+            "code": "UPSTREAM_FAILURE",
+            "request_id": request_id,
+            "diagnostic": {"error_message": "private diagnostic sentinel"},
+            "response_body": "response body secret sentinel",
+        }))
         with patch.object(server, "HAS_REQUESTS", True), patch.object(
             server, "requests", fake_requests, create=True
         ):
@@ -83,9 +92,14 @@ class TransportErrorRedactionTests(unittest.TestCase):
                         else method("https://license.example.com/test", {}, 3)
                     )
                     self.assertEqual(status, 502)
-                    self.assertEqual(data["code"], "UPSTREAM_FAILURE")
+                    self.assertEqual(data, {
+                        "error": "License server rejected the request (HTTP 502)",
+                        "code": "UPSTREAM_FAILURE",
+                        "request_id": request_id,
+                    })
                     self.assertNotIn("backend detail sentinel", data["error"])
                     self.assertNotIn("response body secret sentinel", str(data))
+                    self.assertNotIn("private diagnostic sentinel", str(data))
 
     def test_requests_transport_exception_does_not_expose_exception_text(self):
         fake_requests = _FakeRequests(error=RuntimeError("private path sentinel"))
@@ -122,6 +136,7 @@ class TransportErrorRedactionTests(unittest.TestCase):
                     self.assertNotIn("backend detail sentinel", str(data))
 
     def test_urllib_http_error_redacts_body_and_preserves_safe_code(self):
+        request_id = "ec74115f-5253-4a31-9adb-22d21c904bb6"
         error = urllib.error.HTTPError(
             "https://license.example.com/test",
             403,
@@ -131,6 +146,9 @@ class TransportErrorRedactionTests(unittest.TestCase):
                 json.dumps({
                     "error": "private backend sentinel",
                     "code": "LICENSE_REJECTED",
+                    "request_id": request_id,
+                    "diagnostic": {"error_message": "private diagnostic sentinel"},
+                    "response_body": "private response sentinel",
                 }).encode()
             ),
         )
@@ -144,7 +162,50 @@ class TransportErrorRedactionTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(data["code"], "LICENSE_REJECTED")
         self.assertEqual(data["error"], "License server rejected the request (HTTP 403)")
+        self.assertEqual(data["request_id"], request_id)
         self.assertNotIn("private backend sentinel", str(data))
+        self.assertNotIn("private diagnostic sentinel", str(data))
+        self.assertNotIn("private response sentinel", str(data))
+
+    def test_invalid_or_missing_request_ids_are_omitted_for_both_transports(self):
+        payloads = [
+            {"error": "backend detail", "code": "UPSTREAM_FAILURE", "request_id": "not-a-uuid"},
+            {"error": "backend detail", "code": "UPSTREAM_FAILURE", "request_id": 42},
+            {"error": "backend detail", "code": "UPSTREAM_FAILURE"},
+        ]
+
+        for payload in payloads:
+            expected = {
+                "error": "License server rejected the request (HTTP 502)",
+                "code": "UPSTREAM_FAILURE",
+            }
+            with self.subTest(transport="requests", request_id=payload.get("request_id")):
+                fake_requests = _FakeRequests(response=_FakeResponse(payload))
+                with patch.object(server, "HAS_REQUESTS", True), patch.object(
+                    server, "requests", fake_requests, create=True
+                ):
+                    status, data = self.communicator._http_post(
+                        "https://license.example.com/test", {}, 3
+                    )
+                self.assertEqual(status, 502)
+                self.assertEqual(data, expected)
+
+            with self.subTest(transport="urllib", request_id=payload.get("request_id")):
+                error = urllib.error.HTTPError(
+                    "https://license.example.com/test",
+                    502,
+                    "bad gateway",
+                    {},
+                    io.BytesIO(json.dumps(payload).encode()),
+                )
+                with patch.object(server, "HAS_REQUESTS", False), patch.object(
+                    server.urllib.request, "urlopen", side_effect=error
+                ):
+                    status, data = self.communicator._http_post(
+                        "https://license.example.com/test", {}, 3
+                    )
+                self.assertEqual(status, 502)
+                self.assertEqual(data, expected)
 
     def test_urllib_tls_verification_failure_is_not_reported_as_network_outage(self):
         error = urllib.error.URLError(

@@ -33,7 +33,7 @@ def main():
 
     # 1. Initialize Client (Auto-loads <app_name>_vcon_config.json from project dir)
     client = XLicenseClient(on_license_revoked=on_revoked_callback)
-    
+
     print(f"[*] Target Application Scope : {client.config.app_name}")
     print(f"[*] Target Server URL        : {client.config.server_url}")
     print(f"[*] Device HWID              : {client.get_hwid()}")
@@ -83,7 +83,7 @@ def main():
         counter = 1
         while client.is_authenticated():
             time.sleep(2)
-            print(f"[App Loop] Processing task #{counter}... (License active: {client.get_current_key()})")
+            print(f"[App Loop] Processing task #{counter}...")
             counter += 1
             if counter > 5:
                 break

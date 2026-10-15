@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import json
+import getpass
 import base64
 import ipaddress
 import socket
@@ -64,18 +65,57 @@ except ImportError:
 _PLACEHOLDER_HOSTS = {"example.com", "example.net", "example.org", "localhost"}
 _PLACEHOLDER_LABELS = {"demo", "example", "fake", "placeholder"}
 _RESERVED_SUFFIXES = (".example", ".invalid", ".local", ".localhost", ".test")
-DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS = 60
-ADMIN_LOGOUT_OBSERVATION_TIMEOUT_MS = 120000
+STAGING_HOSTS_ENV_VAR = "LICENX_STAGING_HOSTS"
+PRODUCTION_TEST_HOSTS_ENV_VAR = "LICENX_PRODUCTION_TEST_HOSTS"
+HEARTBEAT_REQUEST_TIMEOUT_SECONDS = 10
+
+
+class MissingClientVersionError(ValueError):
+    """Raised when an Admin config needs an operator-supplied client version."""
 
 
 def create_diagnostic_client(
     config: SDKConfig,
     on_license_revoked: Optional[Callable[[str], None]] = None,
 ) -> XLicenseClient:
-    """Use short polling only in the diagnostic tool, never in customer apps."""
-    config.ping_interval_seconds = DIAGNOSTIC_HEARTBEAT_INTERVAL_SECONDS
-    config.enable_background_heartbeat = True
+    """Use the app's configured heartbeat policy in the diagnostic tool."""
     return XLicenseClient(config=config, on_license_revoked=on_license_revoked)
+
+
+def admin_logout_observation_timeout_ms(config: SDKConfig) -> int:
+    return (
+        config.ping_interval_seconds + 2 * HEARTBEAT_REQUEST_TIMEOUT_SECONDS
+    ) * 1000
+
+
+def get_live_target_environment(server_url: str) -> str:
+    parsed_url = urlsplit(server_url)
+    hostname = parsed_url.hostname
+    if not hostname:
+        raise ValueError("Live test target must include a hostname.")
+
+    normalized_host = hostname.lower().rstrip(".")
+    allowed_hosts = {
+        environment: {
+            allowed_host.strip().lower().rstrip(".")
+            for allowed_host in os.environ.get(environment_variable, "").split(",")
+            if allowed_host.strip()
+        }
+        for environment, environment_variable in (
+            ("staging", STAGING_HOSTS_ENV_VAR),
+            ("production", PRODUCTION_TEST_HOSTS_ENV_VAR),
+        )
+    }
+    if normalized_host in allowed_hosts["production"]:
+        return "production"
+    if normalized_host in allowed_hosts["staging"]:
+        return "staging"
+    if not any(allowed_hosts.values()):
+        raise ValueError(
+            f"Set {STAGING_HOSTS_ENV_VAR} for staging or {PRODUCTION_TEST_HOSTS_ENV_VAR} "
+            "for explicitly approved Production tests."
+        )
+    raise ValueError("Live diagnostics are restricted to explicitly allowlisted hostnames.")
 
 
 def is_admin_device_logout_reason(reason: str) -> bool:
@@ -101,7 +141,10 @@ def record_session_revocation(
     return admin_logout
 
 
-def load_live_config(config_path: str) -> SDKConfig:
+def load_live_config(
+    config_path: str,
+    app_version_override: Optional[str] = None,
+) -> SDKConfig:
     """Load an explicitly selected remote config without SDK fallback defaults."""
     if not isinstance(config_path, str) or not config_path.strip():
         raise ValueError("Select an app config JSON file before running live tests.")
@@ -121,9 +164,27 @@ def load_live_config(config_path: str) -> SDKConfig:
 
     server_url = raw_config.get("server_url")
     app_name = raw_config.get("app_name")
+    configured_app_version = raw_config.get("app_version")
     public_key_pem = raw_config.get("public_key_pem")
-    if not all(isinstance(value, str) and value.strip() for value in (server_url, app_name, public_key_pem)):
-        raise ValueError("Config must include server_url, app_name, and public_key_pem.")
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (server_url, app_name, public_key_pem)
+    ):
+        raise ValueError(
+            "Config must include server_url, app_name, and public_key_pem."
+        )
+
+    if app_version_override is not None:
+        if not isinstance(app_version_override, str) or not app_version_override.strip():
+            raise ValueError("Enter a nonblank actual client app version.")
+        app_version = app_version_override.strip()
+    elif isinstance(configured_app_version, str) and configured_app_version.strip():
+        app_version = configured_app_version.strip()
+    else:
+        raise MissingClientVersionError(
+            "This Admin config has no actual client app_version. Enter the running app's "
+            "release version; do not use min_version, which is server policy."
+        )
 
     normalized_url = server_url.rstrip("/")
     if normalized_url.endswith("/api"):
@@ -133,9 +194,15 @@ def load_live_config(config_path: str) -> SDKConfig:
     if (
         config.server_url != normalized_url
         or config.app_name != app_name
+        or (
+            app_version_override is None
+            and config.app_version != app_version
+        )
         or config.public_key_pem != public_key_pem
     ):
         raise ValueError("The SDK could not load the selected config values; no fallback is allowed.")
+
+    config.app_version = app_version
 
     try:
         parsed_url = urlsplit(config.server_url)
@@ -156,6 +223,8 @@ def load_live_config(config_path: str) -> SDKConfig:
         raise ValueError("Live tests require a valid HTTPS server URL without embedded credentials.")
 
     normalized_host = hostname.lower().rstrip(".")
+    target_environment = get_live_target_environment(config.server_url)
+
     host_labels = normalized_host.split(".")
     if (
         normalized_host in _PLACEHOLDER_HOSTS
@@ -176,6 +245,13 @@ def load_live_config(config_path: str) -> SDKConfig:
     ):
         raise ValueError("Live tests require a fully qualified remote server hostname.")
 
+    if target_environment == "production" and normalized_host not in {
+        allowed_host.strip().lower().rstrip(".")
+        for allowed_host in os.environ.get(PRODUCTION_TEST_HOSTS_ENV_VAR, "").split(",")
+        if allowed_host.strip()
+    }:
+        raise ValueError("Production test target lost its explicit Production allowlist entry.")
+
     pem = public_key_pem.strip()
     if "\\n" in pem and "\n" not in pem:
         pem = pem.replace("\\n", "\n")
@@ -195,7 +271,7 @@ def load_live_config(config_path: str) -> SDKConfig:
 # Check Tkinter availability
 try:
     import tkinter as tk
-    from tkinter import ttk, messagebox, filedialog
+    from tkinter import ttk, messagebox, filedialog, simpledialog
     from tkinter.scrolledtext import ScrolledText
     HAS_TKINTER = True
 except ImportError:
@@ -304,6 +380,11 @@ class DiagnosticEngine:
         self.log("VCON License SDK - Full Forensic Diagnostic Test Started", "INFO")
         self.log(f"Timestamp: {datetime.datetime.now().isoformat()}", "INFO")
         self.log(f"Server Target: {self.config.server_url}", "INFO")
+        try:
+            target_environment = get_live_target_environment(self.config.server_url)
+        except ValueError:
+            target_environment = "unverified"
+        self.log(f"Target Environment: {target_environment.upper()}", "INFO")
         self.log(f"Application Scope: {self.config.app_name}", "INFO")
         self.log("=" * 65, "INFO")
 
@@ -505,7 +586,7 @@ class DiagnosticEngine:
         tier = data.get("tier", "Standard")
         dev_bound = data.get("bound_devices_count", 1)
         dev_limit = data.get("device_limit", 1)
-        return True, f"Valid! Key: {key[:8]}***, Tier: {tier}, Slots: {dev_bound}/{dev_limit}"
+        return True, f"Valid! Tier: {tier}, Slots: {dev_bound}/{dev_limit}"
 
     def _test_crypto_signature(self, active_key: Optional[str]) -> Tuple[bool, str]:
         key = active_key or self.client.get_current_key() or self.client.storage.load_saved_session()
@@ -522,7 +603,7 @@ class DiagnosticEngine:
             "device_name": telemetry.get("device_name", "Unknown-PC"),
             "os_info": telemetry.get("os_info", "Generic-OS"),
             "app_name": self.config.app_name,
-            "app_version": self.config.min_version,
+            "app_version": self.config.app_version,
             "client_time": int(time.time() * 1000),
         }
         status, data = self.communicator._http_post(url, body, 10)
@@ -630,7 +711,7 @@ class DiagnosticEngine:
         telemetry = DeviceManager.get_device_telemetry()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         active_key = self.client.get_current_key()
-        masked_key = f"{active_key[:8]}***" if active_key else "None"
+        masked_key = "Active (redacted)" if active_key else "None"
 
         passed = sum(1 for r in self.results if r["status"] == "PASS")
         failed = sum(1 for r in self.results if r["status"] == "FAIL")
@@ -650,6 +731,8 @@ class DiagnosticEngine:
             f"Generated At    : {now_str}",
             f"Overall Status  : {overall_status}",
             f"Score           : {passed}/{total} Passed ({health})",
+            "Diagnostic Scope: Python SDK and its configured public endpoints only",
+            "Readiness       : NOT CERTIFIED; this is not a product-wide production audit",
             "",
             "1. ENVIRONMENT & HARDWARE TELEMETRY:",
             sub_sep,
@@ -663,9 +746,13 @@ class DiagnosticEngine:
             "2. SDK & BACKEND CONFIGURATION:",
             sub_sep,
             f"Target Server   : {self.config.server_url}",
+            f"Target Environment: {self._report_target_environment()}",
             f"Application ID  : {self.config.app_name}",
+            f"Client Version  : {self.config.app_version}",
             f"Min Version Req : {self.config.min_version}",
             f"Public Key PEM  : {'Loaded (' + str(len(self.config.public_key_pem)) + ' chars)' if self.config.public_key_pem else 'None'}",
+            f"Heartbeat       : {self.config.ping_interval_seconds}s; background {'enabled' if self.config.enable_background_heartbeat else 'disabled'}",
+            f"Offline Grace   : {self.config.offline_grace_seconds}s",
             f"Active Session  : {masked_key}",
             f"License Tier    : {self.client.get_tier()}",
             "",
@@ -704,6 +791,7 @@ class DiagnosticEngine:
 
         report = "\n".join(report_lines)
         sensitive_values = {
+            active_key,
             self.client.get_hwid(),
             socket.gethostname(),
             platform.node(),
@@ -724,10 +812,19 @@ class DiagnosticEngine:
             if value:
                 sensitive_values.add(str(value))
 
-        for value in sorted(sensitive_values, key=len, reverse=True):
-            if value:
-                report = report.replace(value, "[REDACTED]")
+        for value in sorted(
+            (value for value in sensitive_values if value),
+            key=len,
+            reverse=True,
+        ):
+            report = report.replace(value, "[REDACTED]")
         return report
+
+    def _report_target_environment(self) -> str:
+        try:
+            return get_live_target_environment(self.config.server_url).upper()
+        except ValueError:
+            return "UNVERIFIED"
 
 
 # ===========================================================================
@@ -884,6 +981,16 @@ if HAS_TKINTER:
             self.ent_server.pack(side="left", fill="x", expand=True)
             self.ent_server.configure(state="readonly")
 
+            self.lbl_target_environment = tk.Label(
+                card_cfg,
+                text="Environment: No config loaded",
+                font=("Helvetica", 8, "bold"),
+                fg=self.c_text_muted,
+                bg=self.c_card,
+                anchor="w",
+            )
+            self.lbl_target_environment.pack(fill="x", pady=(3, 2))
+
             row2 = tk.Frame(card_cfg, bg=self.c_card)
             row2.pack(fill="x", pady=2)
             tk.Label(row2, text="App Scope:", font=("Helvetica", 9), fg=self.c_text_muted, bg=self.c_card, width=12, anchor="w").pack(side="left")
@@ -894,7 +1001,7 @@ if HAS_TKINTER:
 
             row3 = tk.Frame(card_cfg, bg=self.c_card)
             row3.pack(fill="x", pady=(6, 2))
-            btn_load_cfg = tk.Button(
+            self.btn_load_cfg = tk.Button(
                 row3,
                 text="\U0001f4c2 Browse Config File",
                 font=("Helvetica", 8, "bold"),
@@ -906,7 +1013,7 @@ if HAS_TKINTER:
                 command=self._browse_config,
                 cursor="hand2",
             )
-            btn_load_cfg.pack(side="left")
+            self.btn_load_cfg.pack(side="left")
 
             # 2. Authentication Card
             card_auth = tk.LabelFrame(
@@ -939,6 +1046,7 @@ if HAS_TKINTER:
                 bg=self.c_input_bg,
                 fg="#38bdf8",
                 insertbackground=self.c_text,
+                show="*",
                 bd=1,
                 relief="solid",
             )
@@ -1030,7 +1138,7 @@ if HAS_TKINTER:
 
             self.btn_admin_logout_test = tk.Button(
                 status_frame,
-                text="Observe Admin Panel Logout (120 sec)",
+                text="Observe Admin Panel Logout",
                 font=("Helvetica", 8),
                 bg=self.c_card_border,
                 fg=self.c_text,
@@ -1173,7 +1281,28 @@ if HAS_TKINTER:
             self.btn_login.config(state=state)
             self.btn_autologin.config(state=state)
             self.btn_run_tests.config(state=state)
-            self.btn_admin_logout_test.config(state=state)
+            observer_enabled = enabled and self.config.enable_background_heartbeat
+            self.btn_admin_logout_test.config(
+                state="normal" if observer_enabled else "disabled"
+            )
+
+        def _set_diagnostic_actions_enabled(self, enabled: bool):
+            state = "normal" if enabled else "disabled"
+            configured_state = state if enabled and self.config_loaded else "disabled"
+            self.btn_load_cfg.config(state=state)
+            self.ent_key.config(state=state)
+            self.btn_login.config(state=configured_state)
+            self.btn_autologin.config(state=configured_state)
+            self.btn_logout.config(state=configured_state)
+            self.btn_run_tests.config(state=configured_state)
+            observer_enabled = (
+                enabled
+                and self.config_loaded
+                and self.config.enable_background_heartbeat
+            )
+            self.btn_admin_logout_test.config(
+                state="normal" if observer_enabled else "disabled"
+            )
 
         def _append_log(self, text: str, tag: str = "INFO"):
             self.txt_logs.insert(tk.END, text + "\n", tag)
@@ -1218,13 +1347,31 @@ if HAS_TKINTER:
                 self.ent_server.configure(state="normal")
                 self.ent_server.delete(0, tk.END)
                 self.ent_server.configure(state="readonly")
+                self.lbl_target_environment.config(
+                    text="Environment: No config loaded",
+                    fg=self.c_text_muted,
+                )
                 self.ent_app_name.configure(state="normal")
                 self.ent_app_name.delete(0, tk.END)
                 self.ent_app_name.configure(state="readonly")
                 self.ent_key.delete(0, tk.END)
 
                 try:
-                    config = load_live_config(path)
+                    try:
+                        config = load_live_config(path)
+                    except MissingClientVersionError as error:
+                        app_version = simpledialog.askstring(
+                            "Client Version Required",
+                            f"{error}\n\nEnter the actual client release version:",
+                            parent=self,
+                        )
+                        if not app_version or not app_version.strip():
+                            self._append_log(
+                                "Config load cancelled because the actual client version was not supplied.",
+                                "WARN",
+                            )
+                            return
+                        config = load_live_config(path, app_version_override=app_version)
                     self.config = config
                     self.client = create_diagnostic_client(self.config, self._on_license_revoked)
                     self.engine = DiagnosticEngine(
@@ -1243,13 +1390,46 @@ if HAS_TKINTER:
                     self.ent_app_name.configure(state="readonly")
                     self._set_config_actions_enabled(True)
                     self._append_log("Remote HTTPS app config loaded and validated.", "PASS")
+                    target_environment = get_live_target_environment(self.config.server_url)
+                    self.lbl_target_environment.config(
+                        text=f"Environment: {target_environment.upper()}",
+                        fg=self.c_rose if target_environment == "production" else self.c_emerald,
+                    )
+                    self._append_log(
+                        f"Target environment: {target_environment.upper()}",
+                        "WARN" if target_environment == "production" else "INFO",
+                    )
                     self._append_log(f"Scope: {self.config.app_name} | Server: {self.config.server_url}", "INFO")
                 except Exception as e:
-                    messagebox.showerror("Config Error", f"Failed to parse config: {e}")
+                    messagebox.showerror(
+                        "Config or Target Validation Failed",
+                        f"The selected file could not be enabled for live tests:\n\n{e}",
+                    )
 
         def _handle_auto_login(self):
             if not self.config_loaded:
                 messagebox.showwarning("Config Required", "Load a valid remote app config first.")
+                return
+            if not self.client.storage.load_saved_session():
+                messagebox.showwarning(
+                    "Saved Session Unavailable",
+                    "Secure license-key persistence is disabled. Enter the dedicated disposable test license with Login / Activate.",
+                )
+                return
+            target_environment = get_live_target_environment(self.config.server_url)
+            if target_environment == "production":
+                confirmation_title = "Confirm Production License Validation"
+                confirmation_message = (
+                    f"PRODUCTION TARGET: {self.config.server_url}. Auto-login sends a live validation request, "
+                    "writes Production validation/audit activity, and may bind this device. Continue only "
+                    "with the approved disposable test license."
+                )
+            else:
+                confirmation_title = "Confirm Test License Validation"
+                confirmation_message = (
+                    "Auto-login may validate and bind a dedicated disposable staging test license. Continue?"
+                )
+            if not messagebox.askyesno(confirmation_title, confirmation_message):
                 return
 
             def run():
@@ -1266,9 +1446,24 @@ if HAS_TKINTER:
             if not key:
                 messagebox.showwarning("Input Required", "Please enter a License Key to login.")
                 return
+            target_environment = get_live_target_environment(self.config.server_url)
+            if target_environment == "production":
+                confirmation_title = "Confirm Production License Validation"
+                confirmation_message = (
+                    f"PRODUCTION TARGET: {self.config.server_url}. This sends a live validation request, "
+                    "writes Production validation/audit activity, and may bind this device. Continue only "
+                    "with the separately approved disposable test license."
+                )
+            else:
+                confirmation_title = "Confirm Test License Activation"
+                confirmation_message = (
+                    "This validates and may bind the entered dedicated disposable staging test license. Continue?"
+                )
+            if not messagebox.askyesno(confirmation_title, confirmation_message):
+                return
 
             self.btn_login.config(state="disabled", text="Activating...")
-            self._append_log(f"Sending activation request for key '{key[:8]}...' to {self.config.server_url}...", "INFO")
+            self._append_log(f"Sending license activation request to {self.config.server_url}...", "INFO")
 
             def run():
                 res = self.client.login(key)
@@ -1303,7 +1498,13 @@ if HAS_TKINTER:
 
         def _arm_admin_logout_test(self):
             if not self.client.is_authenticated() or not self.client.get_current_key():
-                messagebox.showwarning("Test Session Required", "Log in with a dedicated staging test license first.")
+                messagebox.showwarning("Test Session Required", "Activate the approved disposable test license first.")
+                return
+            if not self.config.enable_background_heartbeat:
+                messagebox.showwarning(
+                    "Heartbeat Disabled",
+                    "Enable background heartbeat in the app config to observe an admin-panel logout.",
+                )
                 return
             if self.is_running_tests:
                 messagebox.showwarning("Diagnostics Running", "Wait for full diagnostics to finish first.")
@@ -1311,21 +1512,27 @@ if HAS_TKINTER:
             if self._admin_logout_test_armed:
                 return
 
+            timeout_ms = admin_logout_observation_timeout_ms(self.config)
+            timeout_seconds = timeout_ms // 1000
+            target_environment = get_live_target_environment(self.config.server_url)
             self._admin_logout_test_armed = True
             self.btn_admin_logout_test.config(state="disabled", text="Waiting for Admin Panel Logout...")
             self._append_log(
-                "Admin logout observation armed for 120 seconds. Log out/unlink this device in the admin panel now; the SDK should detect it on its next 5-second heartbeat.",
+                f"{target_environment.upper()} admin logout observation armed for {timeout_seconds} seconds. "
+                "Log out/unlink this device in the admin panel now; detection waits for the configured "
+                "heartbeat interval plus its request timeout.",
                 "STEP",
             )
             self._admin_logout_test_after_id = self.after(
-                ADMIN_LOGOUT_OBSERVATION_TIMEOUT_MS,
+                timeout_ms,
                 self._admin_logout_test_timed_out,
             )
 
         def _admin_logout_test_timed_out(self):
+            timeout_seconds = admin_logout_observation_timeout_ms(self.config) // 1000
             self._finish_admin_logout_test(
                 False,
-                "No admin-triggered DEVICE_UNBOUND response was observed within 120 seconds.",
+                f"No admin-triggered DEVICE_UNBOUND response was observed within {timeout_seconds} seconds.",
             )
 
         def _finish_admin_logout_test(self, passed: bool, details: str):
@@ -1336,8 +1543,8 @@ if HAS_TKINTER:
                 self.after_cancel(self._admin_logout_test_after_id)
                 self._admin_logout_test_after_id = None
             self.btn_admin_logout_test.config(
-                state="normal" if self.config_loaded else "disabled",
-                text="Observe Admin Panel Logout (120 sec)",
+                state="normal" if self.config_loaded and self.config.enable_background_heartbeat else "disabled",
+                text="Observe Admin Panel Logout",
             )
             self.engine.record_external_test_result(
                 "Admin Panel Device Logout Propagation",
@@ -1402,13 +1609,23 @@ if HAS_TKINTER:
                 return
             if self.is_running_tests:
                 return
-            if not messagebox.askyesno(
-                "Full Diagnostic Test",
-                "The final diagnostic step will log out this test session and verify that its device slot is released. Continue?",
-            ):
+            target_environment = get_live_target_environment(self.config.server_url)
+            if target_environment == "production":
+                confirmation_title = "Confirm Production Diagnostics"
+                confirmation_message = (
+                    f"PRODUCTION TARGET: {self.config.server_url}. This runs all 12 SDK checks, writes "
+                    "Production validation/audit activity, and finishes by logging out and unbinding the test device. Continue?"
+                )
+            else:
+                confirmation_title = "Full Diagnostic Test"
+                confirmation_message = (
+                    "The final diagnostic step will log out this test session and verify that its device slot is released. Continue?"
+                )
+            if not messagebox.askyesno(confirmation_title, confirmation_message):
                 return
 
             self.is_running_tests = True
+            self._set_diagnostic_actions_enabled(False)
             self.btn_run_tests.config(state="disabled", text="Running Diagnostics...")
             self.progress_bar["value"] = 0
             self.txt_logs.delete("1.0", tk.END)
@@ -1442,7 +1659,8 @@ if HAS_TKINTER:
 
         def _finish_diagnostic_tests(self, summary):
             self.is_running_tests = False
-            self.btn_run_tests.config(state="normal", text="\U0001f680 Run Full SDK Diagnostic Test")
+            self._set_diagnostic_actions_enabled(True)
+            self.btn_run_tests.config(text="\U0001f680 Run Full SDK Diagnostic Test")
             self.progress_bar["value"] = 100
             passed = summary["passed"]
             total = summary["total"]
@@ -1499,6 +1717,17 @@ def run_cli_mode():
     config_path = input("[?] Path to the remote app config JSON: ").strip()
     try:
         cfg = load_live_config(config_path)
+    except MissingClientVersionError as exc:
+        try:
+            app_version = input(f"[?] {exc}\n[?] Actual client release version: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nConfig load cancelled; no network request was sent.")
+            return
+        try:
+            cfg = load_live_config(config_path, app_version_override=app_version)
+        except ValueError as config_error:
+            print(f"[ERROR] Live config rejected: {config_error}")
+            sys.exit(1)
     except ValueError as exc:
         print(f"[ERROR] Live config rejected: {exc}")
         sys.exit(1)
@@ -1514,15 +1743,27 @@ def run_cli_mode():
     client = create_diagnostic_client(cfg, on_license_revoked=on_license_revoked)
     engine = DiagnosticEngine(config=cfg, client=client, live_config_loaded=True)
 
+    target_environment = get_live_target_environment(cfg.server_url)
+    print(f"[*] Target Environment: {target_environment.upper()}")
     print(f"[*] Target Server URL : {cfg.server_url}")
     print(f"[*] Target App Scope  : {cfg.app_name}")
-    print(f"[*] Device HWID       : {client.get_hwid()}")
-    print("[!] Full diagnostics log out the test session and clear its saved local key at the final stage.")
+    print("[*] Device HWID       : [REDACTED]")
+    print(f"[*] Heartbeat Policy  : {cfg.ping_interval_seconds}s; background {'enabled' if cfg.enable_background_heartbeat else 'disabled'}")
+    print(f"[*] Offline Grace     : {cfg.offline_grace_seconds}s")
+    if target_environment == "production":
+        print("[!] Production target: use only the separately approved disposable test license.")
+    else:
+        print("[!] Use only a dedicated disposable non-production staging license.")
     print("-" * 70)
+
+    if target_environment == "production":
+        if input("[?] Production tests create live records/bindings. Type PRODUCTION to continue: ").strip() != "PRODUCTION":
+            print("[!] Production test cancelled before license input or network activity.")
+            return
 
     # Activation is explicit so the exit hook can release the test device.
     try:
-        user_key = input("[?] Dedicated live test license key: ").strip().upper()
+        user_key = getpass.getpass("[?] Dedicated live test license key: ").strip().upper()
     except (KeyboardInterrupt, EOFError):
         print("\nExiting...")
         sys.exit(0)
@@ -1530,12 +1771,21 @@ def run_cli_mode():
     if not user_key:
         print("[ERROR] A dedicated test license key is required for live diagnostics.")
         sys.exit(1)
+    if input("[?] This may validate and bind the test license. Type YES to activate it: ").strip().upper() != "YES":
+        print("[!] License activation cancelled; no validation request was sent.")
+        return
 
     login_result = client.login(user_key)
     if not login_result.success:
         print(f"[ERROR] Live test license activation rejected: {login_result.code} - {login_result.message}")
         sys.exit(1)
     print("[+] Dedicated test license activated; the exit hook will attempt to release its device slot.")
+
+    if input("[?] Full diagnostics will validate the license and finish by logging out/unbinding it. Type YES to continue: ").strip().upper() != "YES":
+        print("[!] Diagnostics cancelled; releasing the activated test session.")
+        if not client.logout(clear_saved_license=True):
+            print("[!] The server did not confirm test-session logout; check the selected target's device binding.")
+        return
 
     print("\n[*] Launching SDK diagnostic test suite...\n")
     summary = engine.run_all_tests()

@@ -110,7 +110,7 @@ class SignatureVerificationTests(unittest.TestCase):
             "signature": signature,
             "public_key": response_public_key,
         }
-        config = SDKConfig(public_key_pem="")
+        config = SDKConfig(public_key_pem="", app_version="1.0.0")
         communicator = ServerCommunicator(config)
         communicator._http_post = Mock(return_value=(200, response))
 
@@ -128,7 +128,10 @@ class SignatureVerificationTests(unittest.TestCase):
     def test_validate_uses_configured_key_not_response_key(self):
         trusted_key = ed25519.Ed25519PrivateKey.generate()
         response_key = ed25519.Ed25519PrivateKey.generate()
-        config = SDKConfig(public_key_pem=self.public_key_pem(trusted_key.public_key()))
+        config = SDKConfig(
+            public_key_pem=self.public_key_pem(trusted_key.public_key()),
+            app_version="1.0.0",
+        )
         communicator = ServerCommunicator(config)
         signature = base64.b64encode(trusted_key.sign(self.message)).decode("ascii")
         response = {

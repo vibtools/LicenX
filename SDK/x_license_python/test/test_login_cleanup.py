@@ -66,6 +66,30 @@ class LoginBindingCleanupTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(result.code, "LICENSE_REVOKED")
+        self.assertIsNone(result.request_id)
+        self.communicator.send_logout.assert_not_called()
+
+    def test_server_request_id_is_exposed_on_failed_login_result(self):
+        request_id = "74dedd91-e751-465e-a17e-6f6ceebedd8a"
+        self.communicator.validate_license.return_value = (
+            False,
+            500,
+            {
+                "code": "HTTP_500",
+                "error": "License server rejected the request (HTTP 500)",
+                "request_id": request_id,
+            },
+        )
+
+        with patch.object(
+            DeviceManager, "get_validation_telemetry", return_value={}
+        ), patch.object(DeviceManager, "get_hwid", return_value="HWID-TEST"):
+            result = self.manager.login("LICENX-TEST")
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.status_code, 500)
+        self.assertEqual(result.code, "HTTP_500")
+        self.assertEqual(result.request_id, request_id)
         self.communicator.send_logout.assert_not_called()
 
     def test_cleanup_failure_does_not_replace_signature_rejection(self):

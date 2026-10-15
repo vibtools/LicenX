@@ -4,20 +4,31 @@ This directory contains `app.py`, an interactive test application built using Py
 
 ---
 
-## 🚀 How to Run
+## How to Run
 
 ### 1. Requirements
 
 - Python 3.8 or higher.
-- `tkinter` (installed by default on Windows & macOS. On Ubuntu/Debian: `sudo apt-get install python3-tk`).
-- No mandatory third-party pip dependencies required! Works out of the box using standard library Python.
+- `tkinter` (installed by default on Windows and macOS; on Ubuntu/Debian install `python3-tk`).
+- Install the SDK requirements. `cryptography` is required to verify signed license responses; `requests` is optional because transport falls back to `urllib`.
 
-### 2. Add Configuration (Auto-Discovery)
+From the `SDK` directory:
 
-1. In the Web Admin Dashboard, go to **Applications** and click **Download Client Config** for your app (or create an application).
-2. Place the downloaded `<app_name>_vcon_config.json` (or `vcon_config.json`) in this `test/` folder or the parent SDK directory.
-3. Confirm the file contains the trusted `public_key_pem` from the Admin Panel config. The diagnostic tool refuses to adopt a key from the server handshake.
-4. If no config file is found, you can enter the Server URL and App Scope directly in the GUI or click **"Browse Config File"**, but a preconfigured trusted public key is still required for key verification and license validation.
+```powershell
+python -m pip install -r x_license_python/requirements.txt
+# For a verified non-production target:
+$env:LICENX_STAGING_HOSTS = '<exact-non-production-hostname>'
+# For an explicitly approved Production test instead, set this separate variable:
+$env:LICENX_PRODUCTION_TEST_HOSTS = '<exact-approved-production-hostname>'
+```
+
+Set only the allowlist appropriate to the target. Matching is by exact hostname; the allowlist does not verify the target's environment.
+
+### 2. Select the App Config
+
+In the Web Admin Dashboard, download the client config, then use **Browse Config File** in the console. The download contains `server_url`, `app_name`, and `public_key_pem`, but it does not contain the running client's release version. If `app_version` is absent, the console asks you to enter the actual client version. Do not use `min_version` as the client version; it is server policy. The console derives and displays the hostname and target class from `server_url`; config loading makes no network request. Staging hosts must match `LICENX_STAGING_HOSTS`; Production hosts must match `LICENX_PRODUCTION_TEST_HOSTS`.
+
+For Production, independently verify the hostname and use only the separately approved disposable test license. Activation writes live validation/audit activity and may bind the device. Full diagnostics perform more live checks and finish by logging out/unbinding; audit records may remain. The UI requires an additional Production confirmation before activation and before a full run.
 
 ### 3. Launch the GUI
 
@@ -50,7 +61,7 @@ python app.py --cli
    - **Auto-Login:** Attempts online validation of a saved session; persistent key storage is currently disabled, so users must enter the key again after restarting.
    - **Heartbeat Ping:** Test on-demand pinging and background thread health.
    - **Logout & Unbind:** Releases machine slot on the server immediately so another machine can use it.
-   - **Admin Logout Observation:** While logged in, arm the 120-second observer, then log out/unlink this device in the Admin Panel. The test console checks the SDK's next 5-second heartbeat, clears its local session when the server reports `DEVICE_UNBOUND`, and records the result.
+   - **Admin Logout Observation:** While logged in with background heartbeat enabled, arm the observer, then log out/unlink this device in the Admin Panel. The observation timeout follows the configured heartbeat interval and request budget.
    - Admin-triggered session events are included in the next saved/copied report even when the observer was not armed. Unarmed events are marked `OBSERVED`, not counted as a passed diagnostic; save/copy the report after the event.
 
 3. **12-Stage Diagnostic Test Suite (Test Button):**
@@ -68,7 +79,7 @@ python app.py --cli
      - Stage 11: Confirms session keys are not persisted, legacy Base64 sessions are rejected and removed, and clock-drift guard boundaries hold.
      - Stage 12: Actual SDK logout followed by a heartbeat that must return `DEVICE_UNBOUND`.
 
-   Full diagnostics end by logging out the active test license and clearing its local saved session. Use only a dedicated disposable test license. A passing diagnostic run checks this configured target; it is not production-readiness certification.
+   Login/activation and full diagnostics require confirmation. Full diagnostics validate the active license and end by logging out and unbinding its device. Use only the disposable license approved for the selected target. The report can be saved or copied; it redacts the license key and hardware identifiers, identifies the target class, and states its scope. A passing run checks this Python SDK and its configured public endpoints only; it does not test every product feature or certify production readiness.
 
 4. **Forensic Report Export:**
    - **Save Report (.log):** Saves the complete report to `sdk_test_report.log`.

@@ -20,7 +20,7 @@ class XLicenseClient:
     Usage:
         from x_license_python import XLicenseClient
 
-        client = XLicenseClient()
+        client = XLicenseClient(app_version="1.0.0")
 
         # 1. Try Auto Login first
         res = client.auto_login()
@@ -48,6 +48,7 @@ class XLicenseClient:
         ping_interval_seconds: Optional[int] = None,
         offline_grace_seconds: Optional[int] = None,
         on_license_revoked: Optional[Callable[[str], None]] = None,
+        app_version: Optional[str] = None,
     ):
         if isinstance(config_path, SDKConfig):
             self.config = config_path
@@ -57,7 +58,8 @@ class XLicenseClient:
             self.config = SDKConfig(
                 app_name=app_name or "vcon_default",
                 server_url=server_url or "http://localhost:3000",
-                public_key_pem=public_key_pem,
+                public_key_pem=public_key_pem or "",
+                app_version=app_version,
                 auto_logout_on_exit=True if auto_logout_on_exit is None else auto_logout_on_exit,
                 auto_save_session=True if auto_save_session is None else auto_save_session,
                 enable_background_heartbeat=True if enable_background_heartbeat is None else enable_background_heartbeat,
@@ -70,6 +72,9 @@ class XLicenseClient:
             )
         else:
             self.config = SDKConfig.from_file(config_path)
+
+        if app_version is not None:
+            self.config.app_version = app_version
 
         self.communicator = ServerCommunicator(self.config)
         self.server = self.communicator

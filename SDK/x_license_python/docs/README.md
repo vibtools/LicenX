@@ -16,7 +16,7 @@ Welcome to the documentation repository for the **VCON Python Client SDK (`x_lic
 
 ## ⚡ 60-Second Quick Start
 
-Before running the SDK, place the Admin Panel-downloaded client config in the auto-discovery location and confirm it contains the trusted `public_key_pem`. License validation fails closed when this key is missing; a key returned by the server is not adopted automatically.
+Before running the SDK, place the Admin Panel-downloaded client config in the auto-discovery location and confirm it contains the trusted `public_key_pem` and an integrator-supplied `app_version` for the actual running release. Do not copy the server's `min_version` into `app_version`. License validation fails closed when either required value is missing; a key returned by the server is not adopted automatically.
 
 ```python
 from x_license_python import XLicenseClient
@@ -24,7 +24,7 @@ from x_license_python import XLicenseClient
 # 1. Initialize client (auto-discovers <app_name>_vcon_config.json)
 client = XLicenseClient()
 
-# 2. Attempt silent auto-login from cached session
+# 2. Attempt auto-login (key persistence is currently disabled)
 result = client.auto_login()
 
 # 3. If no session is saved, prompt user for key

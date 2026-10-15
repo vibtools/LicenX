@@ -108,6 +108,7 @@ pip install -r requirements.txt
   "app_name": "vcon_default",
   "display_name": "My Desktop Pro",
   "min_version": "1.0.0",
+  "app_version": "1.0.0",
   "ping_interval_seconds": 1200,
   "offline_grace_seconds": 0,
   "auto_logout_on_exit": true,
@@ -119,6 +120,8 @@ pip install -r requirements.txt
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA...YourKeyHere...\n-----END PUBLIC KEY-----\n"
 }
 ```
+
+`app_version`-এ চলমান application-এর আসল release version দিন। এটি server policy `min_version` থেকে আলাদা; SDK client version পাঠায় এবং version না থাকলে network request-এর আগেই fail করে।
 
 `public_key_pem` লাইসেন্স authorization-এর জন্য বাধ্যতামূলক trust anchor; এটি optional convenience নয়। Admin Panel থেকে download করা application config-এর public key trusted channel দিয়ে client-এ provision করুন। Validation response বা unauthenticated `/v1/public-key` response থেকে প্রথম trusted key নেবেন না। Field অনুপস্থিত বা খালি থাকলে SDK license validation reject করবে।
 
@@ -142,6 +145,7 @@ client = XLicenseClient(
     app_name="photo_editor_pro",
     server_url="https://license.mycompany.com",
     public_key_pem=TRUSTED_SERVER_PUBLIC_KEY_PEM,
+    app_version="2.4.1",          # চলমান অ্যাপের release version
     ping_interval_seconds=1200,   # ২০ মিনিট পরপর সার্ভার চেক
     auto_logout_on_exit=True,     # অ্যাপ বন্ধ হলে হার্ডওয়্যার স্লট ফ্রি হবে
     auto_save_session=True,       # compatibility-র জন্য আছে; বর্তমানে key persist হয় না
@@ -458,6 +462,8 @@ if __name__ == "__main__":
 | `get_hwid`             | কোনো প্যারামিটার নেই               | `str`            | কম্পিউটারের ইউনিক HWID স্ট্রিং প্রদান করে।                             |
 | `get_device_telemetry` | কোনো প্যারামিটার নেই               | `Dict[str, Any]` | public IP lookup ছাড়া local hardware/OS/network/timezone তথ্য দেয়।     |
 | `get_license_info`     | কোনো প্যারামিটার নেই               | `Optional[Dict]` | সার্ভারের সম্পূর্ণ ভেরিফাইড JSON পেলোড প্রদান করে।                     |
+
+ব্যর্থ login-এর `LoginResult.request_id`-এ server-এর sanitized error response থেকে UUID-আকৃতির correlation ID পাওয়া যেতে পারে। এটি শুধু support/debug correlation-এর জন্য; authorization token নয়। License key কখনো log-এ লিখবেন না।
 
 ---
 
