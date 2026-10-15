@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   Plus,
@@ -87,6 +88,11 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
 
   // Settings dropdown state per license
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{
+    top?: number;
+    bottom?: number;
+    right: number;
+  } | null>(null);
 
   // Edit Modal State
   const [editingLicense, setEditingLicense] = useState<License | null>(null);
@@ -98,17 +104,62 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
   const [editPin, setEditPin] = useState('');
   const [editLoading, setEditLoading] = useState(false);
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click, scroll, or resize
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest('.license-settings-menu')) {
+      if (!target.closest('.license-settings-dropdown') && !target.closest('.license-settings-btn')) {
         setOpenMenuId(null);
+        setMenuPos(null);
+      }
+    };
+    const handleScrollOrResize = () => {
+      if (openMenuId) {
+        setOpenMenuId(null);
+        setMenuPos(null);
       }
     };
     window.addEventListener('click', handleOutsideClick);
-    return () => window.removeEventListener('click', handleOutsideClick);
-  }, []);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      window.removeEventListener('click', handleOutsideClick);
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [openMenuId]);
+
+  const toggleMenu = (e: React.MouseEvent, licId: string) => {
+    e.stopPropagation();
+    if (openMenuId === licId) {
+      setOpenMenuId(null);
+      setMenuPos(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const menuHeight = 220; // safe height for 5-6 dropdown actions
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openUp = spaceBelow < menuHeight;
+    const right = window.innerWidth - rect.right;
+
+    if (openUp) {
+      setMenuPos({
+        bottom: window.innerHeight - rect.top + 4,
+        right,
+      });
+    } else {
+      setMenuPos({
+        top: rect.bottom + 4,
+        right,
+      });
+    }
+    setOpenMenuId(licId);
+  };
+
+  const activeMenuLic = useMemo(() => {
+    if (!openMenuId) return null;
+    return licenses.find((l) => l.id === openMenuId) || null;
+  }, [openMenuId, licenses]);
 
   const loadLicenses = async (force = false) => {
     try {
@@ -638,12 +689,9 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
 
                         {/* 3. Settings Icon */}
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setOpenMenuId(isMenuOpen ? null : lic.id);
-                          }}
+                          onClick={(e) => toggleMenu(e, lic.id)}
                           title="Settings & Actions"
-                          className={`p-1 rounded transition-colors ${
+                          className={`license-settings-btn p-1 rounded transition-colors ${
                             isMenuOpen
                               ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
                               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -651,81 +699,6 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
                         >
                           <Settings className="w-3.5 h-3.5" />
                         </button>
-
-                        {/* Dropdown Menu */}
-                        {isMenuOpen && (
-                          <div
-                            onClick={(e) => e.stopPropagation()}
-                            className="absolute right-2 top-8 z-50 w-44 rounded-md bg-slate-950 border border-slate-800 shadow-xl py-1 text-left font-sans text-xs"
-                          >
-                            {/* Device View */}
-                            <button
-                              onClick={() => {
-                                setOpenMenuId(null);
-                                onManageDevices(lic);
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-300 hover:bg-slate-900 hover:text-slate-200 transition-colors"
-                            >
-                              <Eye className="w-3.5 h-3.5 text-indigo-400/90" />
-                              <span>View Devices</span>
-                            </button>
-
-                            {/* Edit */}
-                            <button
-                              onClick={() => handleOpenEdit(lic)}
-                              className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-300 hover:bg-slate-900 hover:text-slate-200 transition-colors"
-                            >
-                              <Edit2 className="w-3.5 h-3.5 text-slate-400" />
-                              <span>Edit License</span>
-                            </button>
-
-                            <div className="my-1 border-t border-slate-800/80" />
-
-                            {/* Activate */}
-                            {lic.status !== 'active' && (
-                              <button
-                                onClick={() => handleStatusChange(lic.id, 'active')}
-                                className="w-full flex items-center gap-2 px-3 py-1.5 text-emerald-400 hover:bg-slate-900 transition-colors"
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>Activate</span>
-                              </button>
-                            )}
-
-                            {/* Deactivate / Suspend */}
-                            {lic.status !== 'suspended' && (
-                              <button
-                                onClick={() => handleStatusChange(lic.id, 'suspended')}
-                                className="w-full flex items-center gap-2 px-3 py-1.5 text-amber-400 hover:bg-slate-900 transition-colors"
-                              >
-                                <PauseCircle className="w-3.5 h-3.5" />
-                                <span>Suspend</span>
-                              </button>
-                            )}
-
-                            {/* Revoke */}
-                            {lic.status !== 'revoked' && (
-                              <button
-                                onClick={() => handleStatusChange(lic.id, 'revoked')}
-                                className="w-full flex items-center gap-2 px-3 py-1.5 text-rose-400 hover:bg-slate-900 transition-colors"
-                              >
-                                <Ban className="w-3.5 h-3.5" />
-                                <span>Revoke</span>
-                              </button>
-                            )}
-
-                            <div className="my-1 border-t border-slate-800/80" />
-
-                            {/* Delete */}
-                            <button
-                              onClick={() => handleDeleteSingle(lic.id)}
-                              className="w-full flex items-center gap-2 px-3 py-1.5 text-rose-400 hover:bg-rose-950/30 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Delete Key</span>
-                            </button>
-                          </div>
-                        )}
                       </div>
                     </td>
                   </tr>
@@ -868,6 +841,109 @@ export const LicensesTab: React.FC<LicensesTabProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Floating Action Dropdown Popover (Portal to Body) */}
+      {openMenuId && menuPos && activeMenuLic && createPortal(
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            top: menuPos.top !== undefined ? `${menuPos.top}px` : 'auto',
+            bottom: menuPos.bottom !== undefined ? `${menuPos.bottom}px` : 'auto',
+            right: `${menuPos.right}px`,
+          }}
+          className="license-settings-dropdown z-[9999] w-44 rounded-md bg-slate-950/95 backdrop-blur-md border border-slate-800 shadow-2xl py-1 text-left font-sans text-xs animate-in fade-in zoom-in-95 duration-100"
+        >
+          {/* Device View */}
+          <button
+            onClick={() => {
+              setOpenMenuId(null);
+              setMenuPos(null);
+              onManageDevices(activeMenuLic);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-300 hover:bg-slate-900 hover:text-slate-200 transition-colors"
+          >
+            <Eye className="w-3.5 h-3.5 text-indigo-400/90" />
+            <span>View Devices</span>
+          </button>
+
+          {/* Edit */}
+          <button
+            onClick={() => {
+              setOpenMenuId(null);
+              setMenuPos(null);
+              handleOpenEdit(activeMenuLic);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-300 hover:bg-slate-900 hover:text-slate-200 transition-colors"
+          >
+            <Edit2 className="w-3.5 h-3.5 text-slate-400" />
+            <span>Edit License</span>
+          </button>
+
+          <div className="my-1 border-t border-slate-800/80" />
+
+          {/* Activate */}
+          {activeMenuLic.status !== 'active' && (
+            <button
+              onClick={() => {
+                setOpenMenuId(null);
+                setMenuPos(null);
+                handleStatusChange(activeMenuLic.id, 'active');
+              }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-emerald-400 hover:bg-slate-900 transition-colors"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Activate</span>
+            </button>
+          )}
+
+          {/* Deactivate / Suspend */}
+          {activeMenuLic.status !== 'suspended' && (
+            <button
+              onClick={() => {
+                setOpenMenuId(null);
+                setMenuPos(null);
+                handleStatusChange(activeMenuLic.id, 'suspended');
+              }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-amber-400 hover:bg-slate-900 transition-colors"
+            >
+              <PauseCircle className="w-3.5 h-3.5" />
+              <span>Suspend</span>
+            </button>
+          )}
+
+          {/* Revoke */}
+          {activeMenuLic.status !== 'revoked' && (
+            <button
+              onClick={() => {
+                setOpenMenuId(null);
+                setMenuPos(null);
+                handleStatusChange(activeMenuLic.id, 'revoked');
+              }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-rose-400 hover:bg-slate-900 transition-colors"
+            >
+              <Ban className="w-3.5 h-3.5" />
+              <span>Revoke</span>
+            </button>
+          )}
+
+          <div className="my-1 border-t border-slate-800/80" />
+
+          {/* Delete */}
+          <button
+            onClick={() => {
+              setOpenMenuId(null);
+              setMenuPos(null);
+              handleDeleteSingle(activeMenuLic.id);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-rose-400 hover:bg-rose-950/30 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete Key</span>
+          </button>
+        </div>,
+        document.body
       )}
     </div>
   );
