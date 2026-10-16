@@ -1,0 +1,502 @@
+# VCON Python Client SDK — সম্পূর্ণ ইন্টিগ্রেশন ও ডেভেলপার গাইড (A to Z)
+
+**VCON Python Client SDK (`licenx`)**-এর অফিসিয়াল বাংলা ডেভেলপার গাইডে আপনাকে স্বাগতম। এই গাইডে আপনি শিখতে পারবেন কীভাবে পাইথন অ্যাপ্লিকেশন (CLI, Desktop GUI বা Background Automation Script)-এ এন্টারপ্রাইজ গ্রেড লাইসেন্স প্রটেকশন এবং হার্ডওয়্যার নোড লকিং যুক্ত করতে হয়।
+
+---
+
+## 📑 সূচিপত্র
+
+1. [আর্কিটেকচার ও সিকিউরিটি মডেল](#১-আর্কিটেকচার-ও-সিকিউরিটি-মডেল)
+2. [প্রয়োজনীয়তা ও ইনস্টলেশন](#২-প্রয়োজনীয়তা-ও-ইনস্টলেশন)
+3. [কনফিগারেশন সেটআপ](#৩-কনফিগারেশন-সেটআপ)
+4. [মূল অথেনটিকেশন ফ্লো](#৪-মূল-অথেনটিকেশন-ফ্লো)
+   - [ব্যবহারকারীর প্রাথমিক লগইন (Initial Login)](#ব্যবহারকারীর-প্রাথমিক-লগইন-initial-login)
+   - [স্বয়ংক্রিয় সেশন লগইন (Auto-Login)](#স্বয়ংক্রিয়-সেশন-লগইন-auto-login)
+   - [অ্যাপ বন্ধ হলে ডিভাইস স্লট ফ্রি করা (Auto-Logout)](#অ্যাপ-বন্ধ-হলে-ডিভাইস-স্লট-ফ্রি-করা-auto-logout)
+5. [হার্ডওয়্যার লকিং ও HWID জেনারেশন](#৫-হার্ডওয়্যার-লকিং-ও-hwid-জেনারেশন)
+6. [ব্যাকগ্রাউন্ড হার্টবিট ডেমন (২০-মিনিট সাইকেল)](#৬-ব্যাকগ্রাউন্ড-হার্টবিট-ডেমন-২০-মিনিট-সাইকেল)
+7. [Ed25519 ক্রিপ্টোগ্রাফিক সিগনেচার ভেরিফিকেশন](#৭-ed25519-ক্রিপ্টোগ্রাফিক-সিগনেচার-ভেরিফিকেশন)
+8. [মাল্টি-অ্যাপ স্কোপিং ও আইসোলেশন](#৮-মাল্টি-অ্যাপ-স্কোপিং-ও-আইসোলেশন)
+9. [সিস্টেম ঘড়ি ম্যানিপুলেশন ও টেম্পার প্রটেকশন](#৯-সিস্টেম-ঘড়ি-ম্যানিপুলেশন-ও-টেম্পার-প্রটেকশন)
+10. [প্রোডাকশন কোড এক্সাম্পল](#১০-প্রোডাকশন-কোড-এক্সাম্পল)
+    - [উদাহরণ ১: কমান্ড লাইন ইন্টারফেস (CLI Tool)](#উদাহরণ-১-কমান্ড-লাইন-ইন্টারফেস-cli-tool)
+    - [উদাহরণ ২: ডেস্কটপ GUI অ্যাপ্লিকেশন (Tkinter App)](#উদাহরণ-২-ডেস্কটপ-gui-অ্যাপ্লিকেশন-tkinter-app)
+    - [উদাহরণ ৩: ব্যাকগ্রাউন্ড স্ক্রিপ্ট / অটোমেশন বট](#উদাহরণ-৩-ব্যাকগ্রাউন্ড-স্ক্রিপ্ট--অটোমেশন-বট)
+11. [SDK ক্লাস ও মেথড রেফারেন্স (API)](#১১-sdk-ক্লাস-ও-মেথড-রেফারেন্স-api)
+12. [সার্ভার এরর কোড ও রেসপন্স তালিকা](#১২-সার্ভার-এরর-কোড-ও-রেসপন্স-তালিকা)
+13. [সাধারণ প্রশ্নোত্তর (FAQ) ও ট্রাবলশুটিং](#১৩-সাধারণ-প্রশ্নোত্তর-faq-ও-ট্রাবলশুটিং)
+
+---
+
+## ১. আর্কিটেকচার ও সিকিউরিটি মডেল
+
+VCON লাইসেন্সিং সিস্টেম ক্লায়েন্ট ও সার্ভারের মধ্যে নিরাপদ ক্রিপ্টোগ্রাফিক প্রোটোকল ব্যবহার করে। এটি নিশ্চিত করে যে আপনার সফটওয়্যার পাইরেসি বা অনুমতি ছাড়া অন্য কম্পিউটারে চালানো সম্ভব নয়।
+
+```text
++-----------------------------------------------------------------+
+|                       আপনার পাইথন অ্যাপ্লিকেশন                    |
++-----------------------------------------------------------------+
+                                |
+                                v
++-----------------------------------------------------------------+
+|            XLicenseClient (হাই-লেভেল SDK Facade)                |
++-----------------------------------------------------------------+
+   |                 |                   |                   |
+   v                 v                   v                   v
+[device.py]     [login.py]          [storage.py]        [logout.py]
+- মাদারবোর্ড    - অনলাইন ভেরিফাই   - key persist নয়    - এক্সিট হুক
+- ডিস্ক সিরিয়াল  - লিমিট চেক        - ২০-মিনিট ডেমন     - স্লট রিলিজ
+- SHA-256 HWID  - ঘড়ি সুরক্ষা       - legacy cleanup    - atexit/signal
+   |                 |                   |                   |
+   +-----------------+-------------------+-------------------+
+                                |
+                                v
++-----------------------------------------------------------------+
+|                  server.py (নেটওয়ার্ক ট্রান্সপোর্ট)              |
+| - requests ও নেটিভ urllib স্ট্যান্ডার্ড লাইব্রেরি ফলব্যাক        |
+| - Ed25519 ক্রিপ্টোগ্রাফিক রেসপন্স সিগনেচার যাচাইকরণ            |
++-----------------------------------------------------------------+
+                                |
+                         HTTPS / TLS 1.3
+                                v
++-----------------------------------------------------------------+
+|                     VCON License Server                         |
+|  - লাইসেন্স কি, মেয়াদ, ডিভাইস লিমিট, অ্যাপ স্কোপ যাচাই         |
+|  - ডিভাইস স্লট ট্র্যাকিং (active বনাম logged_out)               |
+|  - Ed25519 প্রাইভেট কি দিয়ে ডিজিটাল সিগনেচার তৈরি               |
++-----------------------------------------------------------------+
+```
+
+### প্রধান সিকিউরিটি ফিচারসমূহ:
+
+1. **জিরো অফলাইন বাইপাস (Strict Online-Only):** কোনো ইউজার ইন্টারনেট বন্ধ করে বা অফলাইনে লাইসেন্স বাইপাস করতে পারবে না।
+2. **হার্ডওয়্যার নোড লকিং:** প্রতিটি লাইসেন্স সুনির্দিষ্ট সংখ্যক মেশিনে সীমাবদ্ধ থাকে (যেমন: ১টি মেশিন বা ৩টি মেশিন)।
+3. **ডাইনামিক স্লট রিলিজ (Dynamic Slot Releasing):** ব্যবহারকারী যখন অ্যাপ বন্ধ করে, তখন অটো-লগআউট হুক সার্ভার থেকে তার ডিভাইস স্লট মুক্ত করে দেয়। ফলে অ্যাডমিনের ঝামেলা ছাড়াই সে অন্য পিসিতে তার লাইসেন্স ব্যবহার করতে পারে।
+4. **Ed25519 ডিজিটাল স্বাক্ষর:** সার্ভারের প্রতিটি অনুমোদন Ed25519 দ্বারা স্বাক্ষরিত থাকে, যাতে লোকাল প্রক্সি (Fiddler/Burp) দিয়ে সার্ভার জাল (Spoof) করা অসম্ভব হয়।
+
+---
+
+## ২. প্রয়োজনীয়তা ও ইনস্টলেশন
+
+### এনভায়রনমেন্ট রিকোয়ারমেন্ট:
+
+- **ঘোষিত Python compatibility:** Python 3.8+
+- **Release CI matrix:** GitHub-hosted Ubuntu, Windows ও Intel macOS runner-এ Python 3.8–3.15 পরীক্ষা করা হবে। এটি কনফিগার করা coverage—সফল hosted run-এর প্রমাণ নয়। Python 3.15-এর পরের সংস্করণ, Apple Silicon এবং Ubuntu ছাড়া অন্য Linux distro এই matrix-এ নেই।
+- **অপারেটিং সিস্টেম:** Windows, macOS ও Linux। Release CI কেবল উপরে উল্লেখিত runner environment পরীক্ষা করে; প্রতিটি OS release, architecture বা Linux distro certify করে না।
+
+### Dependency
+
+RSA ও Ed25519 license signature যাচাইয়ের জন্য `cryptography` package বাধ্যতামূলক। এটি না থাকলে SDK signed license response reject করে। `requests` optional; এটি না থাকলে HTTP transport Python standard library-এর `urllib` ব্যবহার করে।
+
+```bash
+pip install -r requirements.txt
+```
+
+`cryptography` ছাড়া SDK চালাবেন না; এতে handwritten RSA verification fallback নেই।
+
+---
+
+## ৩. কনফিগারেশন সেটআপ
+
+### সুপারিশকৃত: `licenx.config.py`
+
+প্রজেক্টের root-এ এই Python ফাইলটি তৈরি করে literal settings দিন। `XLicenseClient()` বর্তমান ফোল্ডার অথবা main script-এর ফোল্ডারে unique ফাইলটি খুঁজে পায় এবং Python code execute না করে মানগুলো পড়ে:
+
+```python
+app_config = {
+        "server_url": "https://license.example.com",
+        "public_key_pem": "",
+        "app_name": "example_app",
+        "display_name": "Example App",
+        "min_version": "1.0.0",
+        "app_version": "1.0.0",
+        "ping_interval_seconds": 1200,
+        "offline_grace_seconds": 0,
+        "auto_logout_on_exit": True,
+        "request_timeout_seconds": 15,
+        "auto_login_enabled": True,
+        "auto_save_session": True,
+        "enable_background_heartbeat": True,
+        "strict_online_only": True,
+}
+```
+
+উদাহরণের host reserved; trusted channel দিয়ে RSA বা Ed25519 `public_key_pem` provision করুন। `app_version`-এ চলমান app-এর আসল release দিন; `min_version` server policy। Remote server-এর জন্য HTTPS বাধ্যতামূলক। Ping interval ৬০–১,২০০ এবং offline grace ০–৩,৬০০ সেকেন্ড।
+
+আগের integration-এর জন্য Admin JSON এখনও supported এবং deprecated নয়। একাধিক Python config বা Python ও JSON config একসঙ্গে পাওয়া গেলে discovery ambiguity error দেয়।
+
+### ঐচ্ছিক: Constructor Overrides
+
+সরাসরি কোডের মাধ্যমে ক্লায়েন্ট ইনিশিয়ালাইজ করতে পারেন:
+
+```python
+from licenx import XLicenseClient
+
+# Application-এর trusted channel দিয়ে provision করা server public key ব্যবহার করুন।
+client = XLicenseClient(
+    app_name="photo_editor_pro",
+    server_url="https://license.mycompany.com",
+    public_key_pem=TRUSTED_SERVER_PUBLIC_KEY_PEM,
+    app_version="2.4.1",          # চলমান অ্যাপের release version
+    ping_interval_seconds=1200,   # ২০ মিনিট পরপর সার্ভার চেক
+    auto_logout_on_exit=True,     # অ্যাপ বন্ধ হলে হার্ডওয়্যার স্লট ফ্রি হবে
+    auto_save_session=True,       # compatibility-র জন্য আছে; বর্তমানে key persist হয় না
+)
+```
+
+**সেভ করা সেশনের আচরণ:** SDK-তে secure OS credential store যুক্ত না হওয়া পর্যন্ত license key disk-এ persist করা বন্ধ। তাই `auto_login()` `NO_SAVED_SESSION` দেয় এবং প্রতিবার restart-এর পর ব্যবহারকারীকে key দিতে হবে। Compatibility-র জন্য `auto_save_session` option রাখা হয়েছে, কিন্তু এটি key write করে না। পুরনো `.vcon_session_<app>.dat` ফাইল access হলে reject করে সরানো হয়।
+
+---
+
+## ৪. মূল অথেনটিকেশন ফ্লো
+
+### ব্যবহারকারীর প্রাথমিক লগইন (Initial Login)
+
+যখন ব্যবহারকারী প্রথমবার অ্যাপ চালু করে, তখন তার লাইসেন্স কি চেয়ে লগইন করান:
+
+```python
+from licenx import XLicenseClient
+
+client = XLicenseClient()
+
+user_key = input("আপনার লাইসেন্স কি প্রবেশ করান: ").strip()
+result = client.login(user_key)
+
+if result.success:
+    print(f"লগইন সফল হয়েছে! টায়ার: {client.get_tier()}")
+    print(f"আপনার হার্ডওয়্যার আইডি: {client.get_hwid()}")
+else:
+    print(f"লগইন ব্যর্থ: {result.message} (কোড: {result.code})")
+```
+
+### স্বয়ংক্রিয় সেশন লগইন (Auto-Login)
+
+পরবর্তী সময়ে অ্যাপ চালু হলে `auto_login()` চালানো যায়, তবে বর্তমানে key persist হয় না। এটি `NO_SAVED_SESSION` দেয়; ব্যবহারকারীর কাছ থেকে key নিয়ে অনলাইনে যাচাই করুন:
+
+```python
+from licenx import XLicenseClient
+
+client = XLicenseClient()
+
+# প্রথমে সাইলেন্ট অটো-লগইন চেষ্টা করুন
+result = client.auto_login()
+
+if result.success:
+    print("স্বাগতম! লাইসেন্স স্বয়ংক্রিয়ভাবে ভেরিফাই হয়েছে।")
+else:
+    # সেশন না থাকলে ব্যবহারকারীর থেকে কি ইনপুট নিন
+    user_key = input("আপনার লাইসেন্স কি দিন: ").strip()
+    result = client.login(user_key)
+```
+
+### অ্যাপ বন্ধ হলে ডিভাইস স্লট ফ্রি করা (Auto-Logout)
+
+ইউজার যখন অ্যাপ কেটে দেয় (উইন্ডো ক্লোজ, `sys.exit()` বা `Ctrl+C`):
+
+- SDK-এর `logout.py` `atexit`, `SIGINT` ও `SIGTERM` cleanup hook নিবন্ধন করে। সিগন্যাল এলে cleanup একবার চালিয়ে আগে থেকে host app-এ নিবন্ধিত handler-কে একই signal ও frame দেয়। Default ও ignored signal-এর আচরণও অক্ষুণ্ণ থাকে।
+- সার্ভারে তাৎক্ষণিক নোটিফিকেশন পাঠায় এবং ডিভাইসটি `logged_out` মার্ক করে।
+- **সুবিধা:** ডিভাইসের স্লট তৎক্ষণাৎ মুক্ত হয়ে যায়। ব্যবহারকারী সাথে সাথে অন্য কম্পিউটারে তার লাইসেন্স ব্যবহার করতে পারে।
+- License key লোকাল মেশিনে persist হয় না; অ্যাপ পুনরায় চালু করলে key দিয়ে আবার online authentication করতে হবে।
+
+Host app নিজে shutdown ও signal পরিচালনা করলে `auto_logout_on_exit=False` দিন; তখন SDK কোনো automatic exit বা signal hook নিবন্ধন করবে না।
+
+সম্পূর্ণ লগআউট (Sign Out বা Unlink License):
+
+```python
+# সার্ভার থেকে স্লট রিলিজ করবে এবং লোকাল মেশিন থেকে কি মুছে ফেলবে
+client.logout(clear_saved_license=True)
+```
+
+---
+
+## ৫. হার্ডওয়্যার লকিং ও HWID জেনারেশন
+
+SDK-এর `DeviceManager` ক্লাস মেশিনের মৌলিক হার্ডওয়্যার তথ্য সংগ্রহ করে একটি অপরিবর্তনীয় HWID তৈরি করে:
+
+- **মাদারবোর্ড UUID**
+- **প্রাইমারি ডিস্ক/এসএসডি সিরিয়াল**
+- **নেটওয়ার্ক কার্ডের MAC অ্যাড্রেস**
+- **CPU মডেল ও আর্কিটেকচার**
+
+এই উপাদানগুলোকে একত্রিত করে **SHA-256** হ্যাশ করা হয়:
+`HWID-XXXX-XXXX-XXXX-XXXX`
+
+```python
+from licenx import DeviceManager
+
+hwid = DeviceManager.get_hwid()
+telemetry = DeviceManager.get_device_telemetry()
+
+print("Hardware ID:", hwid)
+print("অপারেটিং সিস্টেম:", telemetry["os_info"])
+print("Local IP:", telemetry["local_ip"])
+```
+
+Login-এ device binding-এর জন্য প্রয়োজনীয় HWID এবং শুধু `device_name`, `os_info` metadata পাঠানো হয়; বিস্তারিত local telemetry পাঠানো হয় না। `DeviceManager.get_device_telemetry()` default-এ public IP খোঁজে না। স্পষ্টভাবে প্রয়োজন হলে `include_public_ip=True` দিন, অথবা legacy full-data opt-in `DeviceManager.get_full_telemetry()` ব্যবহার করুন; দুটোতেই `api.ipify.org`-এ request যায়। Generated diagnostic report-এ HWID, hostname, MAC/IP এবং অন্য machine-specific identifier redact করা হয়।
+
+---
+
+## ৬. ব্যাকগ্রাউন্ড হার্টবিট ডেমন (২০-মিনিট সাইকেল)
+
+সফলভাবে লগইন হওয়ার পর SDK একটি হালকা ব্যাকগ্রাউন্ড থ্রেড চালু করে:
+
+- Default-এ প্রতি ২০ মিনিটে server check হয়; `ping_interval_seconds` দিয়ে ৬০–১,২০০ সেকেন্ডের মধ্যে সেট করা যায়।
+- ইউআই থ্রেড বা মূল অ্যাপ্লিকেশনের পারফরম্যান্সে কোনো প্রভাব ফেলে না।
+- প্রতিটি heartbeat-এ নতুন random nonce পাঠানো হয়। সার্ভার response sign করে; SDK configured `public_key_pem` দিয়ে signature যাচাই করে এবং nonce মিলিয়ে দেখে।
+- **Offline grace:** `offline_grace_seconds` default `0` (fail-closed), সীমা ০–৩,৬০০ সেকেন্ড। Positive value হলে প্রথম transient network/service failure detect হওয়ার পর চলমান session ওই সময় পর্যন্ত থাকবে; valid signed heartbeat এলে timer reset হবে।
+- **তাৎক্ষণিক invalidation:** Server-এর explicit revoke/deny, malformed response, invalid signature, nonce mismatch বা TLS verification failure-এ grace প্রযোজ্য নয়; access সঙ্গে সঙ্গে বন্ধ হবে।
+- `enable_background_heartbeat` বন্ধ করলে automatic revoke check ও grace-expiry enforcement বন্ধ থাকে; automatic detection SLA প্রযোজ্য নয়।
+- **Device lease:** Server heartbeat সফল হলে binding renew করে। Lease expire হলে পরের heartbeat reject হয় এবং current session বন্ধ হয়। নতুন login-এ server verification বাধ্যতামূলক; slot খালি থাকলে অন্য device bind করতে পারে।
+- Legacy `on_license_revoked` callback কেবল session invalidated হলে চলে; grace চলাকালীন transient failure-এ নয়।
+
+```python
+def handle_revocation(reason: str):
+    print(f"\n[সতর্কবার্তা] লাইসেন্সটি অ্যাডমিন দ্বারা স্থগিত করা হয়েছে: {reason}")
+    # অ্যাপ বন্ধ করুন বা প্রিমিয়াম ফিচার লক করুন
+    exit(1)
+
+client = XLicenseClient(on_license_revoked=handle_revocation)
+```
+
+হার্টবিট ব্যর্থতার নীতি:
+ম্যানুয়াল `client.ping()`-ও signed challenge যাচাই করে এবং configured offline grace policy মেনে চলে। Initial validation response-এর legacy grace field Python SDK-র offline grace নিয়ন্ত্রণ করে না।
+
+যেকোনো সময় ম্যানুয়ালি পিং চেক করতে:
+
+```python
+ping_status = client.ping()
+if not ping_status.get("valid"):
+    print("লাইসেন্স যাচাই করা যায়নি:", ping_status.get("message"))
+    if not client.is_authenticated():
+        print("লাইসেন্স সেশন বন্ধ হয়েছে")
+```
+
+---
+
+## ৭. Ed25519 ক্রিপ্টোগ্রাফিক সিগনেচার ভেরিফিকেশন
+
+সার্ভার থেকে পাঠানো প্রতিটি অনুমোদনের রেসপন্স সার্ভারের প্রাইভেট কি দ্বারা ডিজিটালভাবে স্বাক্ষরিত (Signed) থাকে।
+
+1. সার্ভার রেসপন্সকে Canonical JSON আকারে সাজায়।
+2. প্রাইভেট Ed25519 কি দিয়ে ডিজিটাল সিগনেচার তৈরি করে।
+3. ক্লায়েন্ট SDK কনফিগারেশনে থাকা `public_key_pem` দিয়ে সিগনেচারটি মিলিয়ে নেয়।
+4. ফলে কোনো আক্রমণকারী যদি Fiddler বা লোকাল প্রক্সি দিয়ে ফেক রেসপন্স বানায়, তবে ক্লায়েন্ট `SIGNATURE_FAILED` এরর দিয়ে তা বাতিল করে দেবে।
+
+---
+
+## ৮. মাল্টি-অ্যাপ স্কোপিং ও আইসোলেশন
+
+একটি VCON সার্ভারে একাধিক সফটওয়্যার রেজিস্টার থাকতে পারে।
+
+- কোনো অ্যাপের লাইসেন্স অন্য অ্যাপে ব্যবহার করা যায় না।
+- গ্লোবাল লাইসেন্স (`app_id: null`) থাকলে সেটি সব অ্যাপে কাজ করে।
+- অ্যাডমিন যদি সার্ভারে `min_version` (যেমন `2.0.0`) নির্ধারণ করে দেয় এবং ব্যবহারকারীর অ্যাপ যদি পুরানো ভার্সনের (`1.5.0`) হয়, সার্ভার `APP_VERSION_OUTDATED` ফিরিয়ে দেবে এবং আপডেট করতে বলবে।
+
+---
+
+## ৯. সিস্টেম ঘড়ি ম্যানিপুলেশন ও টেম্পার প্রটেকশন
+
+মেয়াদ শেষ হওয়া লাইসেন্স চালানোর জন্য ব্যবহারকারী যদি পিসির ঘড়ি পিছিয়ে দেয়:
+
+1. সার্ভার প্রতিটি রেসপন্সে ট্রাস্টেড `server_time` প্রদান করে।
+2. `OfflineGuard` ক্লায়েন্টের সময় ও সার্ভারের সময়ের পার্থক্য পরিমাপ করে।
+3. পার্থক্য ১৫ মিনিটের বেশি হলে স্বয়ংক্রিয়ভাবে `CLOCK_TAMPERED` এরর দিয়ে লগইন বন্ধ করে দেয়।
+
+---
+
+## ১০. প্রোডাকশন কোড এক্সাম্পল
+
+### উদাহরণ ১: কমান্ড লাইন ইন্টারফেস (CLI Tool)
+
+```python
+#!/usr/bin/env python3
+import sys
+from licenx import XLicenseClient
+
+def on_revoked(reason: str):
+    print(f"\n[সতর্কবার্তা] লাইসেন্স বাতিল হয়েছে: {reason}")
+    sys.exit(1)
+
+def main():
+    print("=== My Professional CLI Application ===")
+    client = XLicenseClient(on_license_revoked=on_revoked)
+
+    # ১. প্রথমে অটো-লগইন চেষ্টা করুন
+    res = client.auto_login()
+
+    # ২. সেভ করা সেশন না থাকলে কি ইনপুট চান
+    if not res.success:
+        key = input("অনুগ্রহ করে আপনার লাইসেন্স কি প্রবেশ করান: ").strip()
+        res = client.login(key)
+
+    if not res.success:
+        print(f"লগইন ব্যর্থ: {res.message}")
+        sys.exit(1)
+
+    print(f"[+] অ্যাক্সেস মঞ্জুর! লাইসেন্স টায়ার: {client.get_tier()}")
+    print(f"[+] হার্ডওয়্যার আইডি: {client.get_hwid()}")
+
+    # আপনার মূল কাজ শুরু করুন...
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+### উদাহরণ ২: ডেস্কটপ GUI অ্যাপ্লিকেশন (Tkinter App)
+
+```python
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+from licenx import XLicenseClient
+
+class MyDesktopApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("এন্টারপ্রাইজ ডেস্কটপ সফটওয়্যার")
+        self.geometry("450x300")
+
+        self.client = XLicenseClient(on_license_revoked=self.on_revoked)
+        self.verify_access()
+
+    def verify_access(self):
+        # অটো-লগইন চেক
+        res = self.client.auto_login()
+        if not res.success:
+            key = simpledialog.askstring("অ্যাক্টিভেশন", "আপনার লাইসেন্স কি দিন:")
+            if not key:
+                self.destroy()
+                return
+            res = self.client.login(key)
+
+        if res.success:
+            self.load_dashboard()
+        else:
+            messagebox.showerror("অ্যাক্টিভেশন ব্যর্থ", res.message)
+            self.destroy()
+
+    def load_dashboard(self):
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        tk.Label(self, text="স্বাগতম! সফটওয়্যার আনলক হয়েছে", font=("Arial", 14, "bold"), fg="green").pack(pady=20)
+        tk.Label(self, text=f"টায়ার: {self.client.get_tier()}").pack(pady=5)
+        tk.Label(self, text=f"HWID: {self.client.get_hwid()}", fg="gray").pack(pady=5)
+
+        tk.Button(self, text="সাইন আউট (স্লট রিলিজ)", command=self.handle_logout, bg="#e11d48", fg="white").pack(pady=20)
+
+    def handle_logout(self):
+        if messagebox.askyesno("লগআউট", "এই পিসি থেকে লাইসেন্স কি আনলিংক করবেন?"):
+            self.client.logout(clear_saved_license=True)
+            self.destroy()
+
+    def on_revoked(self, reason: str):
+        messagebox.showerror("লাইসেন্স বাতিল", f"সার্ভার থেকে লাইসেন্স প্রত্যাহার করা হয়েছে:\n{reason}")
+        self.destroy()
+
+if __name__ == "__main__":
+    app = MyDesktopApp()
+    app.mainloop()
+```
+
+---
+
+### উদাহরণ ৩: ব্যাকগ্রাউন্ড স্ক্রিপ্ট / অটোমেশন বট
+
+```python
+import os
+import time
+import sys
+from licenx import XLicenseClient
+
+def main():
+    client = XLicenseClient(
+        app_name="data_automation_bot",
+        server_url="https://license.mysite.com",
+        auto_logout_on_exit=True
+    )
+
+    env_key = os.getenv("LICENSE_KEY")
+    res = client.auto_login()
+    if not res.success and env_key:
+        res = client.login(env_key)
+
+    if not res.success:
+        print(f"[ক্রিটিকাল এরর] লাইসেন্স ছাড়া স্ক্রিপ্ট চলতে পারবে না: {res.message}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"বট চালু হয়েছে। অনুমোদিত টায়ার: {client.get_tier()}")
+
+    # মূল লুপ
+    while client.is_authenticated():
+        # নিয়মিত টাস্ক করুন...
+        time.sleep(30)
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## ১১. SDK ক্লাস ও মেথড রেফারেন্স (API)
+
+### `XLicenseClient`
+
+| মেথড                   | প্যারামিটারসমূহ                    | রিটার্ন টাইপ     | বিবরণ                                                                  |
+| ---------------------- | ---------------------------------- | ---------------- | ---------------------------------------------------------------------- |
+| `login`                | `license_key: str`                 | `LoginResult`    | অনলাইনে লাইসেন্স যাচাই করে এবং ২০-মিনিট হার্টবিট শুরু করে।             |
+| `auto_login`           | কোনো প্যারামিটার নেই               | `LoginResult`    | key persistence বন্ধ থাকায় `NO_SAVED_SESSION` দেয়।                     |
+| `logout`               | `clear_saved_license: bool = True` | `bool`           | ডিভাইস স্লট মুক্ত করে এবং লোকাল কি মুছে দেয়।                           |
+| `ping`                 | কোনো প্যারামিটার নেই               | `Dict[str, Any]` | তাৎক্ষণিক অন-ডিমান্ড পিং চেক করে স্ট্যাটাস ডিকশনারি ফেরত দেয়।          |
+| `is_authenticated`     | কোনো প্যারামিটার নেই               | `bool`           | ক্লায়েন্ট বর্তমানে সক্রিয়ভাবে অনুমোদিত কি না জানায়।                  |
+| `get_tier`             | কোনো প্যারামিটার নেই               | `str`            | লাইসেন্স টায়ার নাম প্রদান করে (যেমন: `Standard`, `Pro`, `Enterprise`)। |
+| `get_hwid`             | কোনো প্যারামিটার নেই               | `str`            | কম্পিউটারের ইউনিক HWID স্ট্রিং প্রদান করে।                             |
+| `get_device_telemetry` | কোনো প্যারামিটার নেই               | `Dict[str, Any]` | public IP lookup ছাড়া local hardware/OS/network/timezone তথ্য দেয়।     |
+| `get_license_info`     | কোনো প্যারামিটার নেই               | `Optional[Dict]` | সার্ভারের সম্পূর্ণ ভেরিফাইড JSON পেলোড প্রদান করে।                     |
+
+ব্যর্থ login-এর `LoginResult.request_id`-এ server-এর sanitized error response থেকে UUID-আকৃতির correlation ID পাওয়া যেতে পারে। এটি শুধু support/debug correlation-এর জন্য; authorization token নয়। License key কখনো log-এ লিখবেন না।
+
+---
+
+## ১২. সার্ভার এরর কোড ও রেসপন্স তালিকা
+
+| এরর কোড                | HTTP স্ট্যাটাস | অর্থ                                          | করণীয়                                    |
+| ---------------------- | -------------- | --------------------------------------------- | ----------------------------------------- |
+| `OK`                   | 200            | লাইসেন্স সক্রিয় ও অনুমোদিত                   | সফটওয়্যারের সম্পূর্ণ অ্যাক্সেস দিন       |
+| `KEY_NOT_FOUND`        | 404            | ডাটাবেজে লাইসেন্স কি খুঁজে পাওয়া যায়নি        | ব্যবহারকারীকে কি পুনরায় চেক করতে বলুন     |
+| `DEVICE_LIMIT_REACHED` | 403            | অনুমোদিত মেশিনের সীমা পূর্ণ হয়ে গেছে          | অন্য পিসিতে সফটওয়্যার বন্ধ করতে বলুন     |
+| `DEVICE_UNBOUND`       | 403            | ডিভাইসটি আনলিংক বা লগআউট হয়েছে                | পুনরায় `login()` করতে বলুন                |
+| `LICENSE_EXPIRED`      | 403            | লাইসেন্সের মেয়াদ শেষ হয়ে গেছে                 | লাইসেন্স রিনিউ করতে বলুন                  |
+| `LICENSE_REVOKED`      | 403            | অ্যাডমিন লাইসেন্সটি বাতিল করেছেন              | অ্যাপ বন্ধ করুন                           |
+| `LICENSE_SUSPENDED`    | 403            | সাময়িকভাবে লাইসেন্স স্থগিত করা হয়েছে          | সাপোর্টে যোগাযোগ করতে বলুন                |
+| `LICENSE_APP_MISMATCH` | 403            | এই লাইসেন্সটি অন্য সফটওয়্যারের জন্য প্রযোজ্য | সঠিক সফটওয়্যারের কি ব্যবহার করুন         |
+| `APP_VERSION_OUTDATED` | 426            | ক্লায়েন্ট সফটওয়্যারটি পুরানো                | সফটওয়্যারের নতুন ভার্সন আপডেট করুন       |
+| `CLOCK_TAMPERED`       | 403            | পিসির ঘড়ি ও সার্ভারের সময়ে বড় গরমিল           | ব্যবহারকারীকে সিস্টেম ঘড়ি সিঙ্ক করতে বলুন |
+| `SIGNATURE_FAILED`     | 403            | ডিজিটাল স্বাক্ষর মিলেনি (প্রক্সি/জাল সার্ভার) | সংযোগটি অনিরাপদ হিসেবে বাতিল করুন         |
+
+---
+
+## ১৩. সাধারণ প্রশ্নোত্তর (FAQ) ও ট্রাবলশুটিং
+
+### প্রশ্ন ১: ব্যবহারকারী কি ইন্টারনেট ছাড়া আমার সফটওয়্যার চালাতে পারবে?
+
+**উত্তর:** না। পাইরেসি ও ক্র্যাকিং সম্পূর্ণ বন্ধ রাখার জন্য VCON SDK কঠোর অনলাইন অথেনটিকেশন নীতি মেনে চলে।
+
+### প্রশ্ন ২: ব্যবহারের মাঝখানে সাময়িকভাবে ইন্টারনেট চলে গেলে কি অ্যাপ বন্ধ হয়ে যাবে?
+
+**উত্তর:** না। সাময়িক নেটওয়ার্ক ড্রপ হলে ২০-মিনিট ব্যাকগ্রাউন্ড থ্রেড পরবর্তী সাইকেলে পুনরায় চেষ্টা করে। শুধুমাত্র সার্ভার থেকে সরাসরি বাতিল (`REVOKED` বা `UNBOUND`) বার্তা আসলেই অ্যাপ বন্ধ হবে।
+
+### প্রশ্ন ৩: পাইথন কোড দিয়ে তৈরি `.exe` ফাইলে কীভাবে এটি যুক্ত করব?
+
+**উত্তর:** PyInstaller দিয়ে খুব সহজেই বিল্ড করা যায়:
+
+```bash
+pyinstaller --onefile --add-data "licenx.config.py:." main.py
+```
+
+যেহেতু SDK-তে পাইথনের স্ট্যান্ডার্ড লাইব্রেরির বিকল্প রয়েছে, তাই কোনো জটিল হিডেন ইমপোর্ট ছাড়াই এটি নিখুঁতভাবে সিঙ্গেল ফাইল এক্সিকিউটেবলে পরিণত হয়।
+
+---
+
+_VCON License Server — নির্ভরযোগ্য, নিরাপদ ও প্রফেশনাল সফটওয়্যার লাইসেন্সিং সলিউশন।_

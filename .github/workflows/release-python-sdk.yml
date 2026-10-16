@@ -38,6 +38,7 @@ jobs:
           import ast
           import os
           import re
+          import tomllib
           from pathlib import Path
 
           tag_name = os.environ["TAG_NAME"]
@@ -65,6 +66,15 @@ jobs:
                   f"Tag version {match.group(1)} does not match SDK version {sdk_version}"
               )
 
+          package_project = tomllib.loads(
+              Path("SDK/client/python/licenx/pyproject.toml").read_text(encoding="utf-8")
+          )
+          package_version = package_project["project"]["version"]
+          if match.group(1) != package_version:
+              raise SystemExit(
+                  f"Tag version {match.group(1)} does not match licenx package version {package_version}"
+              )
+
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={sdk_version}\n")
           PY
@@ -75,7 +85,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15-intel]
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+        python-version:
+          ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -98,8 +109,32 @@ jobs:
           PYTHONPATH: SDK
         run: python -m unittest discover -s SDK/x_license_python/test -p 'test_*.py'
 
+  licenx-tests:
+    needs: validate-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install licenx test dependencies
+        run: python -m pip install -r SDK/client/python/licenx/requirements.txt
+
+      - name: Run licenx package tests
+        env:
+          PYTHONPATH: SDK/client/python
+        run: python -m unittest discover -s SDK/client/python/licenx/test -p 'test_*.py'
+
   release:
-    needs: [validate-release, sdk-tests]
+    needs: [validate-release, sdk-tests, licenx-tests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -123,6 +158,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install Python build frontend
+        run: python -m pip install --upgrade build
+
+      - name: Build licenx wheel and source distribution
+        run: python -m build --wheel --sdist --outdir dist/licenx SDK/client/python/licenx
+
+      - name: Create licenx artifact checksums
+        run: |
+          cd dist/licenx
+          sha256sum licenx-*.whl licenx-*.tar.gz > licenx-SHA256SUMS
 
       - name: Install project dependencies
         run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
@@ -158,6 +204,9 @@ jobs:
           gh release upload "$TAG_NAME" \
             public/x_license_python.zip \
             public/x_license_python.zip.sha256 \
+            dist/licenx/licenx-*.whl \
+            dist/licenx/licenx-*.tar.gz \
+            dist/licenx/licenx-SHA256SUMS \
             --clobber
 
       - name: Verify uploaded release assets
@@ -170,9 +219,16 @@ jobs:
           gh release download "$TAG_NAME" \
             --pattern x_license_python.zip \
             --pattern x_license_python.zip.sha256 \
+            --pattern 'licenx-*.whl' \
+            --pattern 'licenx-*.tar.gz' \
+            --pattern licenx-SHA256SUMS \
             --dir "$verification_dir"
           (
             cd "$verification_dir"
             sha256sum --check x_license_python.zip.sha256
+            sha256sum --check licenx-SHA256SUMS
           )
           cmp public/x_license_python.zip "$verification_dir/x_license_python.zip"
+          for artifact in dist/licenx/licenx-*.whl dist/licenx/licenx-*.tar.gz; do
+            cmp "$artifact" "$verification_dir/$(basename "$artifact")"
+          done

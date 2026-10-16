@@ -1,38 +1,37 @@
-import React, { useState, useEffect } from 'react';
 import {
-  ShieldCheck,
-  Search,
-  Lock,
-  Key,
-  Laptop,
-  Clock,
-  RotateCcw,
-  CheckCircle2,
-  XCircle,
+  Activity,
   AlertCircle,
-  Loader2,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
-  User,
-  Activity,
-  ArrowRight,
-  ArrowLeft,
-  ExternalLink,
-  Smartphone,
+  Clock,
+  Copy,
   Cpu,
-  SlidersHorizontal,
+  ExternalLink,
   Eye,
   EyeOff,
-  Megaphone,
-  Mail,
-  Send,
-  MessageSquare,
-  Copy,
-  Check,
+  Key,
+  Laptop,
   Layers,
+  Loader2,
+  Lock,
+  Mail,
+  Megaphone,
+  MessageSquare,
+  RotateCcw,
+  Search,
+  Send,
+  ShieldCheck,
+  SlidersHorizontal,
+  User,
+  XCircle
 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../services/apiClient';
-import { SiteSettings, DEFAULT_SITE_SETTINGS } from '../types';
+import { DEFAULT_SITE_SETTINGS, SiteSettings } from '../types';
 
 interface QuickCheckResult {
   status: string;

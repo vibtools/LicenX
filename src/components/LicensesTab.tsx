@@ -1,28 +1,28 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import {
-  Search,
-  Plus,
-  Layers,
-  Copy,
-  Check,
-  Laptop,
-  Trash2,
-  Edit2,
-  RefreshCw,
-  Download,
-  RotateCcw,
-  LogOut,
-  Settings,
-  CheckCircle2,
-  PauseCircle,
   Ban,
+  Check,
+  CheckCircle2,
+  Copy,
+  Download,
+  Edit2,
   Eye,
+  Laptop,
+  Layers,
+  LogOut,
+  PauseCircle,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Settings,
+  Trash2,
 } from 'lucide-react';
-import { api } from '../services/apiClient';
-import { License, AppItem } from '../types';
-import { TablePagination } from './TablePagination';
+import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useConfirm } from '../context/ConfirmContext';
+import { api } from '../services/apiClient';
+import { AppItem, License } from '../types';
+import { TablePagination } from './TablePagination';
 
 interface LicensesTabProps {
   onOpenCreate: () => void;
