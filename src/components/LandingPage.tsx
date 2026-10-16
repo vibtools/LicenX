@@ -403,16 +403,28 @@ export const LandingPage: React.FC<LandingPageProps> = ({ siteSettings: propSite
             </span>
           </div>
 
-          {/* Right Side: Buy License CTA Button */}
-          <a
-            href={siteSettings.buyLicenseUrl || '#'}
-            target={siteSettings.buyLicenseUrl && siteSettings.buyLicenseUrl !== '#' ? '_blank' : undefined}
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600/90 hover:bg-indigo-600 active:bg-indigo-700 text-slate-100 font-medium text-[11px] transition-colors shadow-sm"
-          >
-            <span>Buy License</span>
-            <ExternalLink className="w-2.5 h-2.5 opacity-80" />
-          </a>
+          {/* Right Side: Navigation & Buy License CTA Button */}
+          <div className="flex items-center gap-3">
+            <a
+              href="https://html.vibid.my/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-[11px] font-medium text-slate-300 hover:text-indigo-400 transition-colors"
+            >
+              <span>Free HTML</span>
+              <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+            </a>
+
+            <a
+              href={siteSettings.buyLicenseUrl || '#'}
+              target={siteSettings.buyLicenseUrl && siteSettings.buyLicenseUrl !== '#' ? '_blank' : undefined}
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600/90 hover:bg-indigo-600 active:bg-indigo-700 text-slate-100 font-medium text-[11px] transition-colors shadow-sm"
+            >
+              <span>Buy License</span>
+              <ExternalLink className="w-2.5 h-2.5 opacity-80" />
+            </a>
+          </div>
         </div>
       </header>
 
