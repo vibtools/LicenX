@@ -8,3 +8,10 @@ public/x_license_python.zip
 .env*
 !.env.example
 /notes/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+vcon_data.db

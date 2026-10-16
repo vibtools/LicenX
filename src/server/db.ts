@@ -491,26 +491,6 @@ export async function initDatabaseSchema(env?: any): Promise<void> {
     );
   `);
 
-    // 7. Auto seed default app if no apps exist
-    const existingApps = await db.execute("SELECT id FROM apps LIMIT 1");
-    if (existingApps.rows.length === 0) {
-      const now = Date.now();
-      await db.execute({
-        sql: `INSERT INTO apps (id, app_slug, display_name, min_version, status, app_secret, description, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-        args: [
-          "app_vcon_default",
-          "vcon_default",
-          "VCON Default Suite",
-          "1.0.0",
-          "sec_" + crypto.randomBytes(16).toString("hex"),
-          "Default core application suite",
-          now,
-          now,
-        ],
-      });
-    }
-
     isSchemaInitialized = true;
   })().finally(() => {
     schemaInitPromise = null;

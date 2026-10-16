@@ -2,10 +2,24 @@ import express from "express";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, test } from "node:test";
+import { after, before, test } from "node:test";
 import { apiRouter, requireAdminApiKey } from "../src/server/api.js";
 import { generateAdminApiKey } from "../src/server/crypto.js";
 import { getDbClient, initDatabaseSchema } from "../src/server/db.js";
+
+const originalEnvironment = {
+  NODE_ENV: process.env.NODE_ENV,
+  DATABASE_URL: process.env.DATABASE_URL,
+  TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
+  TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
+};
+
+before(async () => {
+  process.env.NODE_ENV = "test";
+  process.env.DATABASE_URL = "file::memory:";
+  delete process.env.TURSO_DATABASE_URL;
+  delete process.env.TURSO_AUTH_TOKEN;
+});
 
 test("requireAdminApiKey rejects request without Authorization header", async () => {
   const middleware = requireAdminApiKey("licenses:create");
@@ -279,6 +293,10 @@ async function startTestServer() {
 after(() => {
   if (testServer) {
     testServer.close();
+  }
+  for (const [key, value] of Object.entries(originalEnvironment)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
 });
 

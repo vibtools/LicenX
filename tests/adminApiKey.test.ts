@@ -1,11 +1,32 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
 import {
   generateAdminApiKey,
   hashAdminApiSecret,
   verifyAdminApiSecret,
 } from '../src/server/crypto.js';
 import { getDbClient, initDatabaseSchema } from '../src/server/db.js';
+
+const originalEnvironment = {
+  NODE_ENV: process.env.NODE_ENV,
+  DATABASE_URL: process.env.DATABASE_URL,
+  TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
+  TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
+};
+
+before(async () => {
+  process.env.NODE_ENV = 'test';
+  process.env.DATABASE_URL = 'file::memory:';
+  delete process.env.TURSO_DATABASE_URL;
+  delete process.env.TURSO_AUTH_TOKEN;
+});
+
+after(() => {
+  for (const [key, value] of Object.entries(originalEnvironment)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 test('generates Admin API Key pair with secure prefixes and hashes', () => {
   const generated = generateAdminApiKey('live');

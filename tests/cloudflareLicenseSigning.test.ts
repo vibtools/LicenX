@@ -45,7 +45,14 @@ beforeEach(async () => {
   await db.execute("DELETE FROM devices");
   await db.execute("DELETE FROM validation_logs");
   await db.execute("DELETE FROM licenses");
+  await db.execute("DELETE FROM apps");
   await db.execute("DELETE FROM admin_config");
+  await db.execute({
+    sql: `INSERT INTO apps
+          (id, app_slug, display_name, min_version, status, app_secret, created_at, updated_at)
+          VALUES ('app_vcon_default', 'vcon_default', 'VCON Default Suite', '1.0.0', 'active', 'sec_test_app', ?, ?)`,
+    args: [Date.now(), Date.now()],
+  });
   await db.execute({
     sql: `INSERT INTO admin_config
           (id, username, password_hash, jwt_secret, ed25519_private_key,
